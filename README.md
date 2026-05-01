@@ -81,7 +81,7 @@ Works out of the box — uses PowerShell's `System.Windows.Forms.Clipboard`. WSL
 
 ## Features
 
-- Auto-detects SSH remotes from `~/.ssh/config` and recent shell history (bash + zsh)
+- Auto-detects SSH remotes from `~/.ssh/config` (does **not** scan shell history — by design, see Security)
 - **Local mode** for when you don't need a remote — saves to `~/sshshot-screenshots/`, copies the local path
 - **Remote mode** uploads via your existing SSH config (ControlMaster connection reuse honored if you've set it)
 - Per-source MD5 deduping — Mac file-saved and clipboard screenshots can't collide and re-upload each other (a real bug Codex caught in upstream PR #1)
@@ -137,6 +137,24 @@ You'd still need a server to receive uploads, and AI agents running over SSH don
 - [ ] macOS demo gif (currently shows the upstream Linux demo)
 - [ ] Test suite (Vitest)
 - [ ] Optional inline image paste (instead of path) for tools that accept multipart pastes — out of scope today, future ergonomic win
+- [ ] Migrate `execSync` shell calls to `spawnSync` with array args — eliminates remaining shell-injection surface (`getRemoteHomePath`'s `ssh -G ${remote}` etc.)
+- [ ] File Socket.dev false-positive review request once Supply Chain score plateaus
+
+## Security
+
+sshshot is intentionally narrow about what it touches:
+
+- **Reads `~/.ssh/config`** — to enumerate hostnames you've already configured. Required for the auto-detect prompt during setup.
+- **Reads/writes the clipboard** — the whole point.
+- **Reads the macOS screenshot folder** (file-watcher mode) and clipboard via `pngpaste` — to capture the image you just took.
+- **Pipes the image to a remote you selected via `ssh user@host`** — the upload mechanic.
+
+What sshshot **does not** do, by deliberate design:
+
+- **Does not read your shell history** (`~/.bash_history`, `~/.zsh_history`). Reading shell history is the #1 behavioral signal of credential-stealing malware (info-stealers do exactly that to find AWS/SSH credentials), and Socket.dev's AI scanner correctly flags packages that do it. Earlier upstream versions scanned history; this fork removed it. Users without `~/.ssh/config` entries can add hosts manually via the setup prompt.
+- **Does not capture the screen.** The OS captures; sshshot only forwards what you produced via Cmd+Shift / Cmd+Ctrl+Shift / Print Screen.
+- **Does not phone home.** No telemetry, analytics, or auto-update checks.
+- **Does not require root, sudo, or any TCC entitlement.**
 
 ## Contributing
 

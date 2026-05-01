@@ -4,7 +4,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
 import { spawn, execSync } from 'child_process'
-import { Config, loadConfig, saveConfig, detectSSHRemotes, detectSSHFromHistory } from './config'
+import { Config, loadConfig, saveConfig, detectSSHRemotes } from './config'
 import { promptConfirm, promptSelect, promptInput, promptMultiSelect } from './prompts'
 import { startMonitor } from './monitor'
 
@@ -94,46 +94,22 @@ function getVersion(): string {
 async function addRemotes(existing: string[]): Promise<string[]> {
   const remotes = [...existing]
 
-  // Collect all detected remotes
-  const allDetected: { name: string; source: string }[] = []
-
-  // From SSH config
+  // Detect SSH hosts from ~/.ssh/config (the only place we read for auto-detection).
+  // Shell history is intentionally NOT scanned — that pattern matches credential-stealer
+  // malware signatures on Socket and similar scanners. Users without ~/.ssh/config
+  // entries can add hosts manually via the "custom SSH remote" prompt below.
   const sshHosts = detectSSHRemotes()
-  for (const host of sshHosts) {
-    // Use user@host format if user is specified, otherwise just host name
-    const remoteName = host.user ? `${host.user}@${host.name}` : host.name
-    if (!remotes.includes(remoteName)) {
-      allDetected.push({
-        name: remoteName,
-        source: 'config'
-      })
-    }
-  }
+  const detected = sshHosts
+    .map((host) => (host.user ? `${host.user}@${host.name}` : host.name))
+    .filter((name) => !remotes.includes(name))
 
-  // From bash/zsh history
-  const historyRemotes = detectSSHFromHistory()
-  for (const remote of historyRemotes) {
-    if (!remotes.includes(remote) && !allDetected.find((d) => d.name === remote)) {
-      allDetected.push({
-        name: remote,
-        source: 'history'
-      })
-    }
-  }
-
-  if (allDetected.length > 0) {
-    const choices = allDetected.map((d) => `${d.name} (${d.source})`)
-
+  if (detected.length > 0) {
     const selected = await promptMultiSelect(
-      'Select SSH remotes to add (space to toggle, enter to confirm)',
-      choices
+      'Select SSH remotes from ~/.ssh/config to add (space to toggle, enter to confirm)',
+      detected
     )
-
-    for (const msg of selected) {
-      const detected = allDetected.find((d) => `${d.name} (${d.source})` === msg)
-      if (detected) {
-        remotes.push(detected.name)
-      }
+    for (const name of selected) {
+      remotes.push(name)
     }
   }
 
