@@ -1,2 +1,9 @@
 node_modules/
 dist/
+
+# macOS
+.DS_Store
+
+# Claude Code (local-only, not committed)
+CLAUDE.md
+.claude/
