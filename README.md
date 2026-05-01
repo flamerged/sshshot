@@ -1,88 +1,167 @@
 # sshshot
 
-Screenshot relay for SSH workflows. Take a screenshot locally, sshshot auto-uploads it to your remote box and pastes the remote path back to your clipboard. macOS, Linux (X11), Windows, WSL.
-
-> Fork of [HendrikYtt/clipshot](https://github.com/HendrikYtt/clipshot) with macOS support added (cherry-picked from upstream PR #1, with bug fixes) and a few quality-of-life improvements. Original credit and license preserved.
-
-![Demo](demo.gif)
-
-## Why?
-
-When using AI CLI tools like Claude Code, Codex, or others, you often need to share screenshots with them. But when you SSH into a remote server to use these tools, you can't paste images at all.
-
-sshshot solves this — take a screenshot locally, and it automatically uploads to your remote server and copies the remote path to your clipboard. So you screenshot like usual, paste the path, and the AI reads the image.
-
-## Install
+**Take a screenshot locally → it auto-uploads via SSH → the remote file path lands on your clipboard.** Built for pasting screenshots into Claude Code, OpenAI Codex, or any other AI agent running over SSH on a remote box, where you can't drag-and-drop images. macOS, Linux (X11), Windows, WSL.
 
 ```bash
 npm install -g @flamerged/sshshot
 ```
 
-### macOS — optional clipboard-screenshot support
+> Fork of [HendrikYtt/clipshot](https://github.com/HendrikYtt/clipshot) with macOS support added (cherry-picked from upstream PR #1, with both Codex-flagged P1 bugs fixed) and modern dev tooling (Yarn 4, ESLint 9, Husky, lint-staged, branch protection). Original credit and license preserved.
 
-sshshot supports both Mac screenshot flows out of the box:
+![Demo](demo.gif)
 
-- **Cmd+Shift+3 / 4 / 5** (saves a `.png` file to your Desktop or wherever `defaults read com.apple.screencapture location` points) — works with **zero dependencies**.
-- **Cmd+Ctrl+Shift+3 / 4 / 5** (puts the image directly on the clipboard, no file) — requires [`pngpaste`](https://github.com/jcsalterego/pngpaste):
+## The problem
+
+You SSH'd into a remote dev box to use Claude Code, Codex, Aider, or any other CLI AI agent. You want to ask it about a screenshot. But you **can't paste an image into a remote terminal** — there's no drag-and-drop, no clipboard sharing, and uploading via `scp` then typing the path manually breaks your flow.
+
+## The fix
+
+sshshot runs as a tiny background daemon on your local machine. The moment you take a screenshot:
+
+1. **Locally** — sshshot detects the new screenshot (clipboard or screenshot folder).
+2. **Uploads it** — pipes the image bytes through SSH to `~/sshshot-screenshots/screenshot-<timestamp>.png` on your remote.
+3. **Pastes back** — replaces your clipboard with the **remote absolute path** to that file.
+4. **You paste** the path into Claude Code / Codex / wherever — the AI's tool layer reads the file and sees your screenshot.
+
+No manual `scp`. No typing paths. Just `Cmd+Shift+4`, then `Cmd+V` into your AI prompt.
+
+## Quick start
+
+```bash
+# install globally
+npm install -g @flamerged/sshshot
+
+# first run — interactive setup, auto-detects your ~/.ssh/config and shell history
+sshshot
+
+# later
+sshshot start    # start daemon (pick a remote)
+sshshot stop     # stop daemon
+sshshot status   # is it running, and against which remote
+sshshot config   # change remotes
+```
+
+## Per-OS setup
+
+### macOS
+
+Two screenshot flows are supported:
+
+- **Cmd+Shift+3 / 4 / 5** — saves a `.png` file to your Desktop (or wherever `defaults read com.apple.screencapture location` points). **Zero dependencies.** This is what most people use.
+- **Cmd+Ctrl+Shift+3 / 4 / 5** — image goes straight to clipboard, no file. Requires [`pngpaste`](https://github.com/jcsalterego/pngpaste):
 
   ```bash
   brew install pngpaste
   ```
 
-If you only ever use the file-saving shortcuts, you can skip `pngpaste` entirely.
+If `pngpaste` isn't installed, the daemon logs a warning and falls back silently to the file-watcher path.
 
 ### Linux
 
-X11 only — needs `xclip`. Wayland support is planned (see Roadmap).
+X11 only. Needs `xclip`:
 
 ```bash
 sudo apt install xclip   # Debian/Ubuntu
 sudo dnf install xclip   # Fedora
+sudo pacman -S xclip     # Arch
 ```
+
+Wayland support is on the [Roadmap](#roadmap).
 
 ### Windows / WSL
 
-Works out of the box (uses PowerShell `System.Windows.Forms.Clipboard`).
+Works out of the box — uses PowerShell's `System.Windows.Forms.Clipboard`. WSL is auto-detected via `/proc/version`.
+
+## Use cases
+
+- **Claude Code over SSH** — paste the path; Claude reads the file via its `Read` tool.
+- **OpenAI Codex CLI** — same flow; Codex reads files referenced in prompts.
+- **Aider, Continue, any AI agent that can read local files on the remote** — works.
+- **Plain ssh sessions where you want to ship a screenshot to a teammate's box** — also works; you just paste the path into a chat.
+
+## Features
+
+- Auto-detects SSH remotes from `~/.ssh/config` and recent shell history (bash + zsh)
+- **Local mode** for when you don't need a remote — saves to `~/sshshot-screenshots/`, copies the local path
+- **Remote mode** uploads via your existing SSH config (ControlMaster connection reuse honored if you've set it)
+- Per-source MD5 deduping — Mac file-saved and clipboard screenshots can't collide and re-upload each other (a real bug Codex caught in upstream PR #1)
+- Background daemon — start once, take screenshots all day
+- WSL support (reads Windows clipboard from inside Linux)
 
 ## Commands
 
 ```
-sshshot              Setup config and start monitoring
-sshshot start        Start monitoring (select target)
-sshshot stop         Stop monitoring
-sshshot status       Show running status and target
-sshshot config       Modify remotes configuration
-sshshot uninstall    Remove config files
+sshshot              first-time setup, then start the daemon
+sshshot start        start daemon (prompts for which remote)
+sshshot stop         stop the running daemon
+sshshot status       show running PID + target remote
+sshshot config       add/remove SSH remotes
+sshshot uninstall    stop daemon + remove ~/.config/sshshot
 ```
 
-## Features
+Logs land in `~/.config/sshshot/logs/sshshot-<timestamp>.log` (rotated hourly).
 
-- Auto-detects SSH remotes from `~/.ssh/config` and shell history
-- **Local mode**: Saves to `~/sshshot-screenshots/`, copies path to clipboard
-- **Remote mode**: Uploads via SSH, copies remote path to clipboard
-- Fast SSH with ControlMaster connection reuse
-- Tracks per-source hashes — Mac file-saved and clipboard screenshots don't collide
-- WSL support (reads Windows clipboard)
+## How it works (technical)
 
-## How it works
+- TypeScript CLI. Single binary entry (`dist/index.js`) that double-purposes as both the foreground configurator and the daemon (when invoked with `--daemon <remote>`).
+- Background daemon spawned via `nohup` (Unix) or `spawn(..., {detached: true})` (Windows) so closing your terminal doesn't kill it.
+- 200 ms poll loop reads the clipboard and (on macOS) the screenshot folder, MD5-hashes new bytes, dedupes per source, then uploads.
+- Upload mechanic: `ssh <remote> 'mkdir -p ~/sshshot-screenshots && cat > ~/sshshot-screenshots/<filename>'` with the image piped to stdin. No temp files, no `scp`.
+- All OS-specific work is shell-outs (`xclip`, `pbcopy` / `pngpaste`, PowerShell `Clipboard.GetImage()`). No native modules, no Electron, no large runtime cost — the daemon idles around 30–80 MB resident.
 
-1. Polls clipboard / screenshot folder for new images (200 ms interval)
-2. Detects changes via per-source MD5 hash comparison
-3. Uploads via SSH or saves locally
-4. Copies absolute path to clipboard for easy pasting
+## FAQ
+
+**Does this need any privileges? Sudo? Mac Screen Recording permission?**
+No. sshshot doesn't capture the screen — it forwards screenshots **you** took with your OS's built-in keystrokes. macOS `pbcopy` / `pngpaste` and reading `~/Desktop` don't require TCC entitlements.
+
+**Will Claude Code / Codex actually see my screenshot, or just receive a string?**
+They receive the path as a string. Both tools (and most AI agents) are happy to call their built-in file-read on a `.png` you reference, decode the image, and use it as input. You don't have to do anything — just paste the path in your prompt and ask your question.
+
+**What about Cmd+Shift+5's video capture / screen recording feature?**
+sshshot only ships screenshot images (`.png`), not screen recordings (`.mov`). Recordings are out of scope.
+
+**Does this expose my screenshots to anyone else?**
+Only to the remote you select. Transport is plain SSH, so authentication and encryption are whatever your `~/.ssh/config` already provides. The screenshot is uploaded under your remote user's home directory.
+
+**Why not use ShareX / Flameshot / Maccy / etc.?**
+Those tools either capture and host externally (privacy: your screenshot lives on a 3rd-party server) or are clipboard managers without an SSH-paste path. sshshot's whole point is **the remote box you already use becomes the destination**.
+
+**Why not a browser extension?**
+You'd still need a server to receive uploads, and AI agents running over SSH don't see your browser's clipboard. SSH-side delivery cuts out the middleman.
 
 ## Roadmap
 
-- [ ] Linux Wayland support (`wl-clipboard`)
-- [ ] Replace 200 ms polling with native file-system events (`fs.watch` / `chokidar`) for the macOS screenshot folder
-- [ ] Record macOS demo gif (currently shows the original Linux demo)
-- [ ] Record Linux X11 demo gif
+- [ ] Linux Wayland clipboard support (`wl-clipboard`)
+- [ ] Replace 200 ms polling with `fs.watch` / `chokidar` for the macOS screenshot folder
+- [ ] Localized macOS screenshot filename matching (currently English-only `Screenshot*.png`; missing Bildschirmfoto, Capture d'écran, etc.)
+- [ ] macOS demo gif (currently shows the upstream Linux demo)
 - [ ] Test suite (Vitest)
+- [ ] Optional inline image paste (instead of path) for tools that accept multipart pastes — out of scope today, future ergonomic win
+
+## Contributing
+
+PRs welcome. The repo enforces:
+
+- `master` is protected — CI must pass, conversation must resolve, signed commits required.
+- Squash-merge only (single commit lands on `master` per PR).
+- Pre-commit hook runs Prettier and ESLint on staged files via `lint-staged`.
+
+```bash
+# clone and set up
+git clone https://github.com/flamerged/sshshot.git
+cd sshshot
+corepack enable           # activates the pinned Yarn 4
+yarn install              # generates yarn.lock the first time
+yarn build                # tsc → dist/
+yarn typecheck            # tsc --noEmit
+yarn lint                 # eslint
+yarn format               # prettier --write
+```
 
 ## Acknowledgements
 
-Built on top of [clipshot](https://github.com/HendrikYtt/clipshot) by Hendrik Ytt. macOS support originally proposed in [clipshot#1](https://github.com/HendrikYtt/clipshot/pull/1) by amoghbanta.
+Built on [clipshot](https://github.com/HendrikYtt/clipshot) by Hendrik Ytt. macOS support originally proposed in [clipshot#1](https://github.com/HendrikYtt/clipshot/pull/1) by amoghbanta — the architecture (concurrent clipboard via `pngpaste` + screenshot-folder file watcher) is theirs; sshshot fixed two P1 bugs flagged in OpenAI Codex's review of that PR.
 
 ## License
 
-MIT — see [LICENSE](./LICENSE).
+[MIT](./LICENSE) — original copyright Hendrik Ytt, fork copyright Mersad Ajanovic.
