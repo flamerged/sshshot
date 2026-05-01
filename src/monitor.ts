@@ -18,6 +18,26 @@ let logFile: string | null = null
 let logStartTime: number = 0
 let lastSeenScreenshotMtime: number = 0
 
+// Cross-source dedupe: Cmd+Ctrl+Shift+4 puts the screenshot on the
+// clipboard AND saves a file at the same time. Both poll branches would
+// otherwise call processNewImage on the same tick, uploading the same
+// image twice with two filenames. We keep a small LRU of hashes seen
+// in either branch and skip on a hit.
+const RECENT_PROCESSED_KEEP = 8
+const recentlyProcessedHashes: string[] = []
+
+function markProcessed(hash: string): void {
+  if (recentlyProcessedHashes.includes(hash)) return
+  recentlyProcessedHashes.push(hash)
+  if (recentlyProcessedHashes.length > RECENT_PROCESSED_KEEP) {
+    recentlyProcessedHashes.shift()
+  }
+}
+
+function wasRecentlyProcessed(hash: string): boolean {
+  return recentlyProcessedHashes.includes(hash)
+}
+
 const isWindows = process.platform === 'win32'
 const isMac = process.platform === 'darwin'
 
@@ -623,8 +643,9 @@ export async function startMonitor(initialRemote: string): Promise<void> {
 
       if (imageBuffer) {
         const currentHash = getImageHash(imageBuffer)
-        if (currentHash !== lastClipboardHash) {
+        if (currentHash !== lastClipboardHash && !wasRecentlyProcessed(currentHash)) {
           lastClipboardHash = currentHash
+          markProcessed(currentHash)
           await processNewImage(imageBuffer, currentRemote, 'clipboard')
         }
       }
@@ -634,8 +655,9 @@ export async function startMonitor(initialRemote: string): Promise<void> {
         const fileBuffer = getLatestMacScreenshot()
         if (fileBuffer) {
           const fileHash = getImageHash(fileBuffer)
-          if (fileHash !== lastFileHash) {
+          if (fileHash !== lastFileHash && !wasRecentlyProcessed(fileHash)) {
             lastFileHash = fileHash
+            markProcessed(fileHash)
             await processNewImage(fileBuffer, currentRemote, 'file')
           }
         }
