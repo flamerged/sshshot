@@ -1,11 +1,16 @@
 {
-  "name": "clipshot",
-  "version": "1.0.18",
-  "description": "Screenshot monitor CLI tool",
+  "name": "@flamerged/sshshot",
+  "version": "0.1.0",
+  "description": "Screenshot relay for SSH workflows — take a screenshot locally, it auto-uploads to your remote box and pastes the remote path back to your clipboard. macOS, Linux (X11), Windows, WSL.",
   "main": "dist/index.js",
   "bin": {
-    "clipshot": "dist/index.js"
+    "sshshot": "dist/index.js"
   },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "tsc",
     "dev": "tsc && node dist/index.js",
@@ -14,13 +19,29 @@
   "keywords": [
     "screenshot",
     "monitor",
-    "clipboard"
+    "clipboard",
+    "ssh",
+    "remote",
+    "macos",
+    "darwin",
+    "linux",
+    "wsl",
+    "tailscale",
+    "claude-code",
+    "codex"
   ],
-  "author": "",
+  "author": "Mersad Ajanovic",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/HendrikYtt/clipshot.git"
+    "url": "git+https://github.com/flamerged/sshshot.git"
+  },
+  "bugs": {
+    "url": "https://github.com/flamerged/sshshot/issues"
+  },
+  "homepage": "https://github.com/flamerged/sshshot#readme",
+  "publishConfig": {
+    "access": "public"
   },
   "devDependencies": {
     "@types/node": "^25.0.10",
