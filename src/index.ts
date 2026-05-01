@@ -12,7 +12,11 @@ const isWindows = process.platform === 'win32'
 
 interface ProcessInfo {
   pid: number
-  command: string
+  // Daemon target if known (parsed from `--daemon <target>` for the pgrep
+  // fallback, or read from config when discovery came via PID file). Null
+  // when we have no reliable signal — the status command renders accordingly
+  // instead of printing a malformed placeholder.
+  target: string | null
 }
 
 // Returns true if a process with the given pid is alive on the current host.
@@ -26,18 +30,58 @@ function isProcessAlive(pid: number): boolean {
   }
 }
 
+// Cmdline introspection — confirms a PID actually belongs to a sshshot
+// daemon before we send it a signal. PIDs get reused; without this check,
+// `sshshot stop` could SIGTERM an unrelated process whose PID happened to
+// match a stale pid file.
+function isSshshotDaemonPid(pid: number): boolean {
+  if (isWindows) {
+    try {
+      const psScript = `$ProgressPreference='SilentlyContinue'; $p = Get-CimInstance Win32_Process -Filter "ProcessId = ${pid}" -ErrorAction SilentlyContinue; if ($p) { $p.CommandLine }`
+      const encoded = Buffer.from(psScript, 'utf16le').toString('base64')
+      const result = spawnSync(
+        'powershell',
+        ['-NoProfile', '-WindowStyle', 'Hidden', '-EncodedCommand', encoded],
+        { encoding: 'utf8', timeout: 2000, windowsHide: true }
+      )
+      const cmdLine = (result.stdout || '').toLowerCase()
+      return cmdLine.includes('sshshot') && cmdLine.includes('--daemon')
+    } catch {
+      return false
+    }
+  }
+  // Linux + macOS: `ps -p <pid> -o args=` portably prints the full command
+  // line with no header. `=` after the column name suppresses the title row.
+  try {
+    const result = spawnSync('ps', ['-p', String(pid), '-o', 'args='], {
+      encoding: 'utf8',
+      timeout: 2000
+    })
+    if (result.status !== 0 || !result.stdout) return false
+    const cmd = result.stdout.toLowerCase()
+    return cmd.includes('sshshot') && cmd.includes('--daemon')
+  } catch {
+    return false
+  }
+}
+
 // Primary: read the PID file the daemon writes at startup. Cross-platform,
 // fast (single fs read), no shell quirks. Falls back to pgrep / PowerShell
 // only if the PID file is missing or stale (orphan recovery).
 function findSshshotProcesses(): ProcessInfo[] {
   const processes: ProcessInfo[] = []
 
-  // Primary: PID file
+  // Primary: PID file. Both alive AND identity-verified — the file alone
+  // isn't enough because PIDs can be recycled between runs.
   try {
     const raw = fs.readFileSync(getPidFile(), 'utf-8').trim()
     const pid = parseInt(raw, 10)
-    if (!isNaN(pid) && pid !== process.pid && isProcessAlive(pid)) {
-      processes.push({ pid, command: 'sshshot --daemon (from pid file)' })
+    if (!isNaN(pid) && pid !== process.pid && isProcessAlive(pid) && isSshshotDaemonPid(pid)) {
+      // We don't have the daemon's start-time argv from the pid file, but
+      // we do know the daemon re-reads config every cycle and switches to
+      // config.activeTarget if set — so that's a reliable display value.
+      const config = loadConfig()
+      processes.push({ pid, target: config?.activeTarget ?? null })
       return processes
     }
   } catch {
@@ -63,7 +107,8 @@ function findSshshotProcesses(): ProcessInfo[] {
         if (match) {
           const pid = parseInt(match[1])
           if (!isNaN(pid) && pid !== process.pid) {
-            processes.push({ pid, command: match[2] })
+            const targetMatch = match[2].match(/--daemon\s+(\S+)/)
+            processes.push({ pid, target: targetMatch ? targetMatch[1] : null })
           }
         }
       }
@@ -72,7 +117,8 @@ function findSshshotProcesses(): ProcessInfo[] {
       for (const line of result.trim().split('\n').filter(Boolean)) {
         const pid = parseInt(line.split(/\s+/)[0])
         if (!isNaN(pid)) {
-          processes.push({ pid, command: line })
+          const targetMatch = line.match(/--daemon\s+(\S+)/)
+          processes.push({ pid, target: targetMatch ? targetMatch[1] : null })
         }
       }
     }
@@ -276,10 +322,8 @@ function showStatus(): void {
   }
 
   for (const proc of processes) {
-    // Try to extract target from command line
-    const match = proc.command.match(/--daemon\s+(\S+)/)
-    if (match) {
-      console.log(`Running (PID: ${proc.pid}) -> ${match[1]}`)
+    if (proc.target) {
+      console.log(`Running (PID: ${proc.pid}) -> ${proc.target}`)
     } else {
       console.log(`Running (PID: ${proc.pid})`)
     }

