@@ -596,64 +596,60 @@ async function pipeToRemote(
   })
 }
 
-function copyToClipboardWindows(text: string): void {
-  // Spawn the target binary with array args and pipe text via stdin — no
-  // shell, no quote-escaping, no shell-injection surface. Same pattern we
-  // use for pbcopy on macOS.
+// Each copy-to-clipboard helper now returns success-bool so the caller can
+// log accurately. Previously a failing xclip (no X11 display, missing
+// binary) silently returned and the daemon logged "-> Copied to clipboard"
+// regardless. Users would paste and get the previous clipboard contents.
+function copyToClipboardWindows(text: string): boolean {
   if (isWindows) {
-    // PowerShell's pipeline reads from stdin via $input
-    spawnSync(
+    const result = spawnSync(
       'powershell',
       ['-NoProfile', '-WindowStyle', 'Hidden', '-Command', '$input | Set-Clipboard'],
       { input: text, timeout: 2000, windowsHide: true }
     )
-  } else {
-    // WSL: clip.exe reads stdin directly, no echo needed
-    spawnSync('clip.exe', [], { input: text, timeout: 2000 })
+    return result.status === 0
   }
+  // WSL: clip.exe reads stdin directly, no echo needed
+  const result = spawnSync('clip.exe', [], { input: text, timeout: 2000 })
+  return result.status === 0
 }
 
-function copyToClipboardX11(text: string): void {
+function copyToClipboardX11(text: string): boolean {
   // xclip -selection clipboard reads text from stdin when no `-i <file>` is
   // given. Spawn with array args; no shell, no quote-escaping needed.
-  spawnSync('xclip', ['-selection', 'clipboard'], { input: text, timeout: 2000 })
+  const result = spawnSync('xclip', ['-selection', 'clipboard'], {
+    input: text,
+    timeout: 2000
+  })
+  return result.status === 0
 }
 
-function copyToClipboardWayland(text: string): void {
+function copyToClipboardWayland(text: string): boolean {
   // wl-copy reads stdin and copies to the clipboard. Spawn with array args;
   // no shell, no escaping. --trim-newline strips the trailing newline most
   // shells would append; we never feed one but it's defensive.
-  spawnSync('wl-copy', ['--trim-newline'], { input: text, timeout: 2000 })
+  const result = spawnSync('wl-copy', ['--trim-newline'], { input: text, timeout: 2000 })
+  return result.status === 0
 }
 
-async function copyToClipboardMac(text: string): Promise<void> {
+async function copyToClipboardMac(text: string): Promise<boolean> {
   // Spawn pbcopy and pipe text via stdin — avoids the macOS /bin/echo `-n` bug
   // (the shell builtin honors -n but the binary doesn't, so `echo -n` would
   // copy `-n FILE_PATH` into the clipboard) and skips shell-escaping entirely.
-  return new Promise((resolve) => {
+  return new Promise<boolean>((resolve) => {
     const proc = spawn('pbcopy')
-    const finish = () => resolve()
-    proc.on('error', finish)
-    proc.on('close', finish)
+    proc.on('error', () => resolve(false))
+    proc.on('close', (code) => resolve(code === 0))
     proc.stdin.write(text)
     proc.stdin.end()
   })
 }
 
-async function copyToClipboard(text: string): Promise<void> {
-  if (isWindows || isWSL()) {
-    copyToClipboardWindows(text)
-    return
-  }
-  if (isMac) {
-    await copyToClipboardMac(text)
-    return
-  }
-  if (isWaylandSession()) {
-    copyToClipboardWayland(text)
-    return
-  }
-  copyToClipboardX11(text)
+async function copyToClipboard(text: string): Promise<boolean> {
+  if (isWindows || isWSL()) return copyToClipboardWindows(text)
+  if (isMac) return copyToClipboardMac(text)
+  if (isWaylandSession()) return copyToClipboardWayland(text)
+  return copyToClipboardX11(text)
 }
 
 async function processNewImage(
@@ -670,8 +666,8 @@ async function processNewImage(
     const result = saveLocal(imageBuffer, filename)
     if (result.success) {
       log(`  -> Saved: ${result.path}`)
-      await copyToClipboard(result.path)
-      log(`  -> Copied to clipboard`)
+      const copied = await copyToClipboard(result.path)
+      log(copied ? `  -> Copied to clipboard` : `  -> Clipboard write failed`)
     } else {
       log(`  -> Failed to save locally`)
     }
@@ -679,8 +675,8 @@ async function processNewImage(
     const result = await pipeToRemote(imageBuffer, remote, filename)
     if (result.success) {
       log(`  -> Sent to ${remote}:${result.path}`)
-      await copyToClipboard(result.path)
-      log(`  -> Copied to clipboard`)
+      const copied = await copyToClipboard(result.path)
+      log(copied ? `  -> Copied to clipboard` : `  -> Clipboard write failed`)
     } else {
       log(`  -> Failed to send to ${remote}`)
       if (result.error) {
@@ -964,8 +960,19 @@ export async function startMonitor(initialRemote: string): Promise<void> {
     })
   }
 
+  // Re-entrancy guard: if a poll iteration takes longer than POLL_INTERVAL_MS
+  // (e.g. a slow ssh upload, a hanging PowerShell on Windows), setInterval
+  // would otherwise fire a second poll on top of the first — concurrent
+  // clipboard reads spawn duplicate xclip/PowerShell processes, and the
+  // upload semaphore can be flooded by the same image being submitted twice
+  // before the first lap finishes updating lastClipboardHash. The guard
+  // makes the loop self-throttling: a long iteration just delays the next
+  // tick rather than stacking work.
+  let pollInFlight = false
+
   const poll = async () => {
-    if (shutdownRequested) return
+    if (shutdownRequested || pollInFlight) return
+    pollInFlight = true
     try {
       // Re-resolve target each cycle so `sshshot target <name>` takes effect
       // without restarting the daemon.
@@ -992,6 +999,8 @@ export async function startMonitor(initialRemote: string): Promise<void> {
       await checkFileScreenshot()
     } catch (err) {
       log(`Error: ${err}`)
+    } finally {
+      pollInFlight = false
     }
   }
 

@@ -120,7 +120,11 @@ function findSshshotProcesses(): ProcessInfo[] {
         }
       }
     } else {
-      const result = execSync("pgrep -af 'node.*[s]shshot.*--daemon'", { encoding: 'utf8' })
+      // -lf prints "PID full-cmdline" — works on both BSD pgrep (macOS,
+      // FreeBSD) and GNU/procps pgrep (Linux). The previous flag combo
+      // `-af` is GNU-only; on BSD `-a` is silently ignored, which made
+      // pgrep emit just PIDs and dropped the target-name extraction below.
+      const result = execSync("pgrep -lf 'node.*[s]shshot.*--daemon'", { encoding: 'utf8' })
       for (const line of result.trim().split('\n').filter(Boolean)) {
         const pid = parseInt(line.split(/\s+/)[0])
         if (!isNaN(pid)) {
@@ -170,6 +174,33 @@ function getVersion(): string {
   const pkgPath = path.join(__dirname, '..', 'package.json')
   const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'))
   return pkg.version
+}
+
+// daemon.log captures the daemon's stdout+stderr — anything escaping the
+// monitor's own structured logger lands here. The internal logs in
+// monitor.ts rotate hourly + prune after 7 days; this one was previously
+// append-only forever. Rotate on each start when the file passes a size
+// cap so a recurring stderr error (failing ssh, missing xclip, etc.) can't
+// silently grow the file unbounded over months.
+const DAEMON_LOG_MAX_BYTES = 5 * 1024 * 1024 // 5 MB
+function rotateDaemonLogIfTooLarge(logDir: string): void {
+  const current = path.join(logDir, 'daemon.log')
+  let stat: fs.Stats
+  try {
+    stat = fs.statSync(current)
+  } catch {
+    return // doesn't exist yet
+  }
+  if (stat.size < DAEMON_LOG_MAX_BYTES) return
+  const archived = path.join(logDir, 'daemon.log.1')
+  try {
+    fs.rmSync(archived, { force: true })
+    fs.renameSync(current, archived)
+  } catch {
+    // best-effort — if rotation fails (permissions, race), the daemon will
+    // just append to the existing file and the cap effectively becomes
+    // higher this round. No reason to abort startup over it.
+  }
 }
 
 async function addRemotes(existing: string[]): Promise<string[]> {
@@ -244,6 +275,7 @@ function startBackground(remote: string): void {
     // processes that the daemon spawns per poll.
     const logDir = path.join(os.homedir(), '.config', 'sshshot', 'logs')
     fs.mkdirSync(logDir, { recursive: true })
+    rotateDaemonLogIfTooLarge(logDir)
     const logFd = fs.openSync(path.join(logDir, 'daemon.log'), 'a')
     child = spawn(process.execPath, [__filename, '--daemon', remote], {
       detached: true,

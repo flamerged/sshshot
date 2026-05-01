@@ -170,6 +170,37 @@ Include selfref
     expect(result.every((h) => h.name === 'a')).toBe(true)
   })
 
+  it('strips inline `# comment` from Host lines (no bogus aliases)', () => {
+    const input = `Host prod # primary production box
+  HostName 1.2.3.4
+  User ops # ops account
+`
+    expect(parseSSHConfig(input)).toEqual([{ name: 'prod', hostname: '1.2.3.4', user: 'ops' }])
+  })
+
+  it('preserves a `#` that is part of a token (no leading whitespace)', () => {
+    // OpenSSH only treats `#` as a comment when preceded by whitespace OR
+    // at start of line. `prod#qa` is a single hostname token.
+    const input = `Host prod#qa
+  HostName q.example.com
+`
+    expect(parseSSHConfig(input)).toEqual([{ name: 'prod#qa', hostname: 'q.example.com' }])
+  })
+
+  it('strips trailing comments on Include lines', () => {
+    const input = `Include corp_config # imported from corp
+`
+    const seen: string[] = []
+    const loader = (spec: string): string[] => {
+      seen.push(spec)
+      return []
+    }
+    parseSSHConfig(input, loader)
+    // The previous parser would have asked the loader for `corp_config`,
+    // `#`, and `imported`/`from`/`corp` — three bogus filesystem lookups.
+    expect(seen).toEqual(['corp_config'])
+  })
+
   it('skips Match blocks (no Host names emitted from them)', () => {
     const input = `Host plain
   HostName plain.example.com
@@ -201,5 +232,15 @@ describe('isValidRemoteName', () => {
     expect(isValidRemoteName('host with space')).toBe(false)
     expect(isValidRemoteName('host\twith\ttab')).toBe(false)
     expect(isValidRemoteName('host\nwith\nnewline')).toBe(false)
+  })
+
+  it('rejects shell metacharacters (defense-in-depth whitelist)', () => {
+    expect(isValidRemoteName('myhost;touch/tmp/evil')).toBe(false)
+    expect(isValidRemoteName('host&&rm')).toBe(false)
+    expect(isValidRemoteName('host|nc')).toBe(false)
+    expect(isValidRemoteName('host`whoami`')).toBe(false)
+    expect(isValidRemoteName('host$(id)')).toBe(false)
+    expect(isValidRemoteName("host'OR'1=1")).toBe(false)
+    expect(isValidRemoteName('host/etc/passwd')).toBe(false)
   })
 })
