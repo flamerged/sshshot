@@ -32,7 +32,7 @@ No manual `scp`. No typing paths. Just `Cmd+Shift+4`, then `Cmd+V` into your AI 
 # install globally
 npm install -g @flamerged/sshshot
 
-# first run — interactive setup, auto-detects your ~/.ssh/config and shell history
+# first run — interactive setup, auto-detects hosts from ~/.ssh/config
 sshshot
 
 # later
@@ -135,7 +135,8 @@ You'd still need a server to receive uploads, and AI agents running over SSH don
 - [ ] Linux Wayland clipboard support (`wl-clipboard`)
 - [ ] Replace 200 ms polling with `fs.watch` / `chokidar` for the macOS screenshot folder
 - [ ] Localized macOS screenshot filename matching (currently English-only `Screenshot*.png`; missing Bildschirmfoto, Capture d'écran, etc.)
-- [ ] macOS demo gif (currently shows the upstream Linux demo)
+- [ ] Record macOS demo gif (current `demo-windows.gif` is the upstream Windows/PowerShell flow)
+- [ ] Record Linux X11 demo gif
 - [ ] Test suite (Vitest)
 - [ ] Optional inline image paste (instead of path) for tools that accept multipart pastes — out of scope today, future ergonomic win
 - [ ] Migrate `execSync` shell calls to `spawnSync` with array args — eliminates remaining shell-injection surface (`getRemoteHomePath`'s `ssh -G ${remote}` etc.)
