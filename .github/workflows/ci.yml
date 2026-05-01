@@ -7,8 +7,21 @@ on:
     branches: [master]
 
 jobs:
-  build:
+  matrix:
     runs-on: ubuntu-latest
+    strategy:
+      # Don't cancel sibling matrix jobs on a single failure — easier to see
+      # 'Node 20 broke, 22 and 24 are fine' at a glance.
+      fail-fast: false
+      matrix:
+        # engines.node: >=20 in package.json. Test the actively-supported
+        # LTS lines (20, 22) plus the version we ship releases on (24).
+        # OS matrix is intentionally NOT used here — the CLI shells out to
+        # OS-specific tools (xclip, wl-paste, pbcopy, PowerShell) that
+        # clean GitHub runners don't exercise meaningfully, so an Ubuntu/
+        # macOS/Windows matrix would test 'corepack enable' three times.
+        node: ['20', '22', '24']
+    name: matrix (Node ${{ matrix.node }})
     steps:
       - uses: actions/checkout@v4
 
@@ -17,7 +30,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '24'
+          node-version: ${{ matrix.node }}
           cache: 'yarn'
 
       - name: Install
@@ -37,3 +50,20 @@ jobs:
 
       - name: Test
         run: yarn test
+
+  # Aggregator job named 'build' so the existing branch-protection rule on
+  # master (which requires the 'build' status check) keeps working without
+  # us having to rewrite the rule for every matrix entry. Fails iff any
+  # matrix entry failed.
+  build:
+    needs: matrix
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Check matrix result
+        run: |
+          if [ "${{ needs.matrix.result }}" != "success" ]; then
+            echo "::error::At least one Node-version matrix job failed"
+            exit 1
+          fi
+          echo "All Node versions passed"
