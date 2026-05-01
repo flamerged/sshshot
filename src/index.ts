@@ -15,13 +15,13 @@ interface ProcessInfo {
   command: string;
 }
 
-function findClipshotProcesses(): ProcessInfo[] {
+function findSshshotProcesses(): ProcessInfo[] {
   const processes: ProcessInfo[] = [];
 
   try {
     if (isWindows) {
       // Use PowerShell to get node processes with command line (WMIC is deprecated)
-      const psScript = `$ProgressPreference = 'SilentlyContinue'; Get-CimInstance Win32_Process -Filter "name = 'node.exe'" | Where-Object { $_.CommandLine -like '*clipshot*' -and $_.CommandLine -like '*--daemon*' } | Select-Object ProcessId,CommandLine | ConvertTo-Csv -NoTypeInformation`;
+      const psScript = `$ProgressPreference = 'SilentlyContinue'; Get-CimInstance Win32_Process -Filter "name = 'node.exe'" | Where-Object { $_.CommandLine -like '*sshshot*' -and $_.CommandLine -like '*--daemon*' } | Select-Object ProcessId,CommandLine | ConvertTo-Csv -NoTypeInformation`;
       const encoded = Buffer.from(psScript, "utf16le").toString("base64");
       const result = execSync(
         `powershell -NoProfile -WindowStyle Hidden -EncodedCommand ${encoded}`,
@@ -41,7 +41,7 @@ function findClipshotProcesses(): ProcessInfo[] {
       }
     } else {
       // Unix: use pgrep
-      const result = execSync("pgrep -af 'node.*[c]lipshot.*--daemon'", { encoding: "utf8" });
+      const result = execSync("pgrep -af 'node.*[s]shshot.*--daemon'", { encoding: "utf8" });
       for (const line of result.trim().split("\n").filter(Boolean)) {
         const pid = parseInt(line.split(/\s+/)[0]);
         if (!isNaN(pid)) {
@@ -68,15 +68,15 @@ function killProcess(pid: number, force = false): void {
   }
 }
 
-function killAllClipshotProcesses(): number {
-  const processes = findClipshotProcesses();
+function killAllSshshotProcesses(): number {
+  const processes = findSshshotProcesses();
 
   for (const proc of processes) {
     killProcess(proc.pid);
   }
 
   // Check if any survived and force kill
-  const remaining = findClipshotProcesses();
+  const remaining = findSshshotProcesses();
   for (const proc of remaining) {
     killProcess(proc.pid, true);
   }
@@ -166,7 +166,7 @@ function startBackground(remote: string): void {
   } else {
     // Linux/macOS: use nohup + shell backgrounding to preserve X11/Wayland access
     // The native clipboard library crashes with Node's detached mode
-    const logDir = path.join(os.homedir(), ".config", "clipshot", "logs");
+    const logDir = path.join(os.homedir(), ".config", "sshshot", "logs");
     fs.mkdirSync(logDir, { recursive: true });
     const cmd = `nohup "${process.execPath}" "${__filename}" --daemon "${remote}" >> "${logDir}/daemon.log" 2>&1 & echo $!`;
     const result = execSync(cmd, {
@@ -176,11 +176,11 @@ function startBackground(remote: string): void {
     console.log(`Started in background (PID: ${result})`);
   }
 
-  console.log(`Logs: ~/.config/clipshot/logs/`);
+  console.log(`Logs: ~/.config/sshshot/logs/`);
 }
 
 function showHelp(): void {
-  console.log(`Usage: clipshot <command>
+  console.log(`Usage: sshshot <command>
 
 Commands:
   start      Start monitoring in background
@@ -195,32 +195,32 @@ Run without command to setup/configure.
 
 function uninstall(): void {
   // Stop any running process
-  const count = killAllClipshotProcesses();
+  const count = killAllSshshotProcesses();
   if (count > 0) {
     console.log("Stopped running process");
   }
 
   // Remove config directory
-  const configDir = path.join(os.homedir(), ".config", "clipshot");
+  const configDir = path.join(os.homedir(), ".config", "sshshot");
   if (fs.existsSync(configDir)) {
     fs.rmSync(configDir, { recursive: true });
     console.log(`Removed ${configDir}`);
   }
 
-  console.log("\nNow run: npm uninstall -g clipshot");
+  console.log("\nNow run: npm uninstall -g sshshot");
 }
 
 function stopBackground(): void {
-  const count = killAllClipshotProcesses();
+  const count = killAllSshshotProcesses();
   if (count > 0) {
     console.log(`Stopped ${count} process(es)`);
   } else {
-    console.log("No clipshot process running");
+    console.log("No sshshot process running");
   }
 }
 
 function showStatus(): void {
-  const processes = findClipshotProcesses();
+  const processes = findSshshotProcesses();
 
   if (processes.length === 0) {
     console.log("Not running");
@@ -279,7 +279,7 @@ async function startCommand(): Promise<void> {
   const config = loadConfig();
 
   if (!config || config.remotes.length === 0) {
-    console.log("No remotes configured. Run 'clipshot' first to set up.");
+    console.log("No remotes configured. Run 'sshshot' first to set up.");
     process.exit(1);
   }
 
@@ -294,7 +294,7 @@ async function startCommand(): Promise<void> {
   }
 
   // Stop any existing process before starting new one
-  const count = killAllClipshotProcesses();
+  const count = killAllSshshotProcesses();
   if (count > 0) {
     console.log(`Stopped previous process`);
   }
@@ -315,7 +315,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  console.log(`clipshot v${getVersion()}\n`);
+  console.log(`sshshot v${getVersion()}\n`);
 
   // Handle commands
   if (command === "help" || command === "--help" || command === "-h") {
@@ -352,7 +352,7 @@ async function main(): Promise<void> {
   const config = await runConfig();
 
   if (config.remotes.length === 0) {
-    console.log("No remotes configured. Run clipshot again to add remotes.");
+    console.log("No remotes configured. Run sshshot again to add remotes.");
     process.exit(0);
   }
 

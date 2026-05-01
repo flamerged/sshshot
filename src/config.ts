@@ -13,7 +13,7 @@ export interface Config {
 }
 
 export function getConfigPath(): string {
-  return path.join(os.homedir(), ".config", "clipshot", "config.json");
+  return path.join(os.homedir(), ".config", "sshshot", "config.json");
 }
 
 export function loadConfig(): Config | null {

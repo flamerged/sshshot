@@ -32,7 +32,7 @@ function isWSL(): boolean {
 }
 
 function getLogDir(): string {
-  return path.join(os.homedir(), ".config", "clipshot", "logs");
+  return path.join(os.homedir(), ".config", "sshshot", "logs");
 }
 
 function ensureLogDir(): void {
@@ -45,7 +45,7 @@ function ensureLogDir(): void {
 function createNewLogFile(): string {
   ensureLogDir();
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-  const filename = `clipshot-${timestamp}.log`;
+  const filename = `sshshot-${timestamp}.log`;
   return path.join(getLogDir(), filename);
 }
 
@@ -70,7 +70,7 @@ function log(message: string): void {
 }
 
 async function getClipboardImageWindows(): Promise<Buffer | null> {
-  const tempFileName = `clipshot-clipboard-${Date.now()}.png`;
+  const tempFileName = `sshshot-clipboard-${Date.now()}.png`;
   let tempFilePath: string | null = null;
 
   try {
@@ -230,7 +230,7 @@ function generateFilename(): string {
 }
 
 function getLocalScreenshotDir(): string {
-  return path.join(os.homedir(), "clipshot-screenshots");
+  return path.join(os.homedir(), "sshshot-screenshots");
 }
 
 function saveLocal(imageBuffer: Buffer, filename: string): { success: boolean; path: string } {
@@ -273,13 +273,13 @@ function getRemoteHomePath(remote: string): string {
 
 async function pipeToRemote(imageBuffer: Buffer, remote: string, filename: string): Promise<{ success: boolean; path: string; error?: string }> {
   const homeDir = getRemoteHomePath(remote);
-  const remotePath = `${homeDir}/clipshot-screenshots/${filename}`;
+  const remotePath = `${homeDir}/sshshot-screenshots/${filename}`;
 
   return new Promise((resolve) => {
     // Use ~ in the command so SSH resolves it correctly
     const proc = spawn("ssh", [
       remote,
-      `mkdir -p ~/clipshot-screenshots && cat > ~/clipshot-screenshots/${filename}`
+      `mkdir -p ~/sshshot-screenshots && cat > ~/sshshot-screenshots/${filename}`
     ], {
       windowsHide: true,
     });
