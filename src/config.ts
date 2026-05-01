@@ -16,8 +16,19 @@ export interface Config {
   activeTarget?: string
 }
 
+export function getConfigDir(): string {
+  return path.join(os.homedir(), '.config', 'sshshot')
+}
+
 export function getConfigPath(): string {
-  return path.join(os.homedir(), '.config', 'sshshot', 'config.json')
+  return path.join(getConfigDir(), 'config.json')
+}
+
+// Single source of truth for the daemon's pid file path. Imported by both
+// monitor.ts (writer) and index.ts (reader) to prevent the two from
+// drifting if the location ever changes.
+export function getPidFile(): string {
+  return path.join(getConfigDir(), 'sshshot.pid')
 }
 
 export function loadConfig(): Config | null {
