@@ -1,9 +1,49 @@
 import enquirer from 'enquirer'
 
 // enquirer's published .d.ts doesn't expose Select/Confirm/Input/MultiSelect
-// on the default export (the runtime does). Cast through `any` so the import
-// is ESM-clean without needing require() / @ts-ignore.
-const { Select, Confirm, Input, MultiSelect } = enquirer as any
+// on the default export (the runtime does). We narrow the type to the exact
+// shape we use rather than `as any`, so misuse of the prompt API still
+// produces a TypeScript error at the call site.
+
+interface PromptInstance<T> {
+  run(): Promise<T>
+}
+
+interface PromptOptions {
+  name: string
+  message: string
+}
+
+interface ConfirmOptions extends PromptOptions {
+  format?: (v: boolean) => string
+}
+
+interface InputOptions extends PromptOptions {
+  initial?: string
+}
+
+interface SelectOptions extends PromptOptions {
+  choices: string[]
+}
+
+interface MultiSelectChoice {
+  enabled?: boolean
+}
+
+interface MultiSelectOptions extends PromptOptions {
+  choices: string[]
+  initial?: string[]
+  indicator?: (state: unknown, choice: MultiSelectChoice) => string
+}
+
+interface EnquirerExports {
+  Confirm: new (opts: ConfirmOptions) => PromptInstance<boolean>
+  Input: new (opts: InputOptions) => PromptInstance<string>
+  Select: new (opts: SelectOptions) => PromptInstance<string>
+  MultiSelect: new (opts: MultiSelectOptions) => PromptInstance<string[]>
+}
+
+const { Select, Confirm, Input, MultiSelect } = enquirer as unknown as EnquirerExports
 
 // Suppress enquirer's readline error on Ctrl+C (Node.js 24+ issue).
 // Scoped tighter than before by also requiring the error to originate from
@@ -62,8 +102,8 @@ export async function promptMultiSelect(message: string, choices: string[]): Pro
       message,
       choices: choices,
       initial: choices,
-      indicator(state: any, choice: any) {
-        return choice.enabled ? '●' : '○'
+      indicator(_state, choice) {
+        return choice.enabled === true ? '●' : '○'
       }
     })
     return await prompt.run()
