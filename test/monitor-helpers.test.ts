@@ -66,9 +66,9 @@ describe('generateFilename', () => {
     }
   })
 
-  it('produces strictly screenshot-<ISO-stamp>-<ms>-<rand4>.png shape', () => {
+  it('produces strictly screenshot-<ISO-stamp>-<ms>-<rand8>.png shape', () => {
     const f = generateFilename()
-    expect(f).toMatch(/^screenshot-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}-[0-9a-f]{4}\.png$/)
+    expect(f).toMatch(/^screenshot-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}-[0-9a-f]{8}\.png$/)
   })
 
   it('produces unique filenames for two calls in the same millisecond', () => {
@@ -88,15 +88,16 @@ describe('SAFE_REMOTE_FILENAME_RE', () => {
     const dangerous = [
       'screenshot-$(rm -rf ~).png',
       'screenshot-`whoami`.png',
-      'screenshot-2026-05-01T12-00-00-000-abcd.png; rm -rf ~',
-      'screenshot-2026-05-01T12-00-00-000-abcd.png && curl evil.com',
+      'screenshot-2026-05-01T12-00-00-000-abcdef12.png; rm -rf ~',
+      'screenshot-2026-05-01T12-00-00-000-abcdef12.png && curl evil.com',
       "screenshot-' OR 1=1 --.png",
       '../../../etc/passwd',
       'screenshot.png',
       'screenshot-2026-05-01.png',
-      'screenshot-2026-05-01T12-00-00-000-ABCD.png', // upper hex rejected
-      'screenshot-2026-05-01T12-00-00.png', // old shape (no ms/suffix) rejected
-      'screenshot-2026-05-01T12-00-00-000-abcd.PNG'
+      'screenshot-2026-05-01T12-00-00-000-ABCDEF12.png', // upper hex rejected
+      'screenshot-2026-05-01T12-00-00-000-abcd.png', // old 4-char suffix rejected
+      'screenshot-2026-05-01T12-00-00.png', // pre-Round-H shape rejected
+      'screenshot-2026-05-01T12-00-00-000-abcdef12.PNG'
     ]
     for (const f of dangerous) {
       expect(SAFE_REMOTE_FILENAME_RE.test(f), f).toBe(false)
@@ -104,7 +105,9 @@ describe('SAFE_REMOTE_FILENAME_RE', () => {
   })
 
   it('accepts the canonical generateFilename output', () => {
-    expect(SAFE_REMOTE_FILENAME_RE.test('screenshot-2026-05-01T12-34-56-789-abcd.png')).toBe(true)
+    expect(SAFE_REMOTE_FILENAME_RE.test('screenshot-2026-05-01T12-34-56-789-abcdef12.png')).toBe(
+      true
+    )
   })
 })
 

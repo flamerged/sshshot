@@ -14,6 +14,13 @@ export interface Config {
   // on its next poll cycle without restarting. Updated via `sshshot target <name>`.
   // Set to "local" to save screenshots locally instead of uploading.
   activeTarget?: string
+  // When true, the daemon stays alive but skips processing screenshots —
+  // clipboard isn't touched, no uploads happen. Toggled via
+  // `sshshot pause` / `sshshot resume` / `sshshot toggle`. Designed for the
+  // common "I want to take a screenshot for Slack/GitHub right now without
+  // sshshot stomping my clipboard" case so the user doesn't have to stop +
+  // restart + re-select target every time.
+  paused?: boolean
 }
 
 // Allowed character set for remote names: alphanumerics plus `.`, `_`, `-`,

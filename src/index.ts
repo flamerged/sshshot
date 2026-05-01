@@ -298,6 +298,9 @@ Commands:
   stop              Stop background process
   status            Show if running
   target [<name>]   Show or change the active target without restarting the daemon
+  pause             Daemon stays alive but stops touching the clipboard
+  resume            Resume processing screenshots
+  toggle            Flip between pause/resume
   config            Modify configuration
   uninstall         Remove config and stop process
   version           Print version and exit
@@ -335,6 +338,39 @@ function setActiveTarget(name: string | undefined): void {
   // and will switch on the next iteration. No restart needed.
 }
 
+// Pause/resume/toggle the running daemon without changing target or
+// restarting the process. The daemon stays alive (so resume is instant);
+// processNewImage early-returns while paused, leaving the user's
+// clipboard untouched. Designed for the common "I want a screenshot for
+// Slack right now, not for Claude Code" case.
+function setPausedState(value: boolean): void {
+  const config = loadConfig()
+  if (!config) {
+    console.log("No configuration found. Run 'sshshot' first to set up remotes.")
+    process.exit(1)
+  }
+  if (Boolean(config.paused) === value) {
+    console.log(value ? 'Already paused' : 'Already active')
+    return
+  }
+  saveConfig({ ...config, paused: value })
+  if (value) {
+    console.log('Paused — sshshot will not touch your clipboard until resume')
+    console.log("Resume with: 'sshshot resume' or 'sshshot toggle'")
+  } else {
+    console.log('Resumed — sshshot is processing screenshots again')
+  }
+}
+
+function toggleActive(): void {
+  const config = loadConfig()
+  if (!config) {
+    console.log("No configuration found. Run 'sshshot' first to set up remotes.")
+    process.exit(1)
+  }
+  setPausedState(!config.paused)
+}
+
 function uninstall(): void {
   // Stop any running process
   const count = killAllSshshotProcesses()
@@ -369,11 +405,16 @@ function showStatus(): void {
     return
   }
 
+  // Surface the paused state on the same line — otherwise users wonder
+  // why screenshots aren't being processed even though `status` says
+  // "Running".
+  const pauseLabel = loadConfig()?.paused ? ' [paused]' : ''
+
   for (const proc of processes) {
     if (proc.target) {
-      console.log(`Running (PID: ${proc.pid}) -> ${proc.target}`)
+      console.log(`Running (PID: ${proc.pid}) -> ${proc.target}${pauseLabel}`)
     } else {
-      console.log(`Running (PID: ${proc.pid})`)
+      console.log(`Running (PID: ${proc.pid})${pauseLabel}`)
     }
   }
 }
@@ -492,6 +533,21 @@ async function main(): Promise<void> {
 
   if (command === 'target') {
     setActiveTarget(args[1])
+    return
+  }
+
+  if (command === 'pause') {
+    setPausedState(true)
+    return
+  }
+
+  if (command === 'resume') {
+    setPausedState(false)
+    return
+  }
+
+  if (command === 'toggle') {
+    toggleActive()
     return
   }
 
