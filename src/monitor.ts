@@ -125,7 +125,13 @@ function log(message: string): void {
 }
 
 async function getClipboardImageWindows(): Promise<Buffer | null> {
-  const tempFileName = `sshshot-clipboard-${Date.now()}.png`
+  // Deterministic temp filename. The original code used a Date.now()
+  // timestamp which made every clipboard read create a NEW file, and any
+  // process kill between PowerShell-save and read-and-unlink left an
+  // orphan. Polling at 5 Hz quickly accumulated orphans in %TEMP% over
+  // the daemon's lifetime. With a fixed name, the worst case is one
+  // orphan total — overwritten on the next clipboard read.
+  const tempFileName = 'sshshot-clipboard.png'
   let tempFilePath: string | null = null
 
   try {
