@@ -8,7 +8,8 @@ npm install -g @flamerged/sshshot
 
 > Fork of [HendrikYtt/clipshot](https://github.com/HendrikYtt/clipshot) with macOS support added (cherry-picked from upstream PR #1, with both Codex-flagged P1 bugs fixed) and modern dev tooling (Yarn 4, ESLint 9, Husky, lint-staged, branch protection). Original credit and license preserved.
 
-![Demo](demo.gif)
+![Demo on Windows / PowerShell](demo-windows.gif)
+_Upstream demo on Windows. macOS and Linux X11 demos are on the [Roadmap](#roadmap)._
 
 ## The problem
 
