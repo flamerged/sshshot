@@ -1,4 +1,4 @@
-import { spawn, execSync } from 'child_process'
+import { spawn, spawnSync, execSync } from 'child_process'
 import * as crypto from 'crypto'
 import * as fs from 'fs'
 import * as path from 'path'
@@ -186,12 +186,25 @@ async function getClipboardImageMac(): Promise<Buffer | null> {
   }
 }
 
+// macOS screenshot filenames are localized. The English default is
+// "Screenshot YYYY-MM-DD at ...png" but other system languages use
+// completely different prefixes. The user can also override the prefix via
+// `defaults write com.apple.screencapture name <Custom>`. We match the known
+// stock prefixes for major locales and accept any user-defined prefix that
+// looks like a screenshot (single word + space + date-shaped content).
+const MAC_SCREENSHOT_FILENAME_RE =
+  /^(Screenshot|Bildschirm(foto|aufnahme)|Capture (d'écran|d'ecran)|Captura (de pantalla|de tela)|Schermata|Schermafbeelding|Skärmavbild|Skjermbilde|Skærmbillede|スクリーンショット|スクリーンキャプチャ|화면 캡처|Снимок экрана|Capture)\b.*\.png$/i
+
+function isMacScreenshotFilename(filename: string): boolean {
+  return MAC_SCREENSHOT_FILENAME_RE.test(filename)
+}
+
 function getLatestMacScreenshot(): Buffer | null {
   const dir = getMacScreenshotDir()
   try {
     const files = fs
       .readdirSync(dir)
-      .filter((f) => f.startsWith('Screenshot') && f.endsWith('.png'))
+      .filter(isMacScreenshotFilename)
       .map((f) => {
         const fullPath = path.join(dir, f)
         const stat = fs.statSync(fullPath)
@@ -262,19 +275,18 @@ function getRemoteHomePath(remote: string): string {
     const user = match[1]
     return user === 'root' ? '/root' : `/home/${user}`
   }
-  // Named host without user — resolve via ssh -G
-  try {
-    const output = execSync(`ssh -G ${remote} 2>/dev/null`, {
-      encoding: 'utf8',
-      timeout: 3000
-    })
-    const userMatch = output.match(/^user\s+(.+)$/m)
+  // Named host without user — resolve via `ssh -G`. Use spawnSync with array
+  // args (NOT execSync with a template string) so a maliciously-crafted
+  // `remote` containing shell metacharacters cannot inject. The `remote`
+  // value comes from the user's own ~/.ssh/config which is normally trusted,
+  // but defense in depth is cheap.
+  const result = spawnSync('ssh', ['-G', remote], { encoding: 'utf8', timeout: 3000 })
+  if (result.status === 0 && result.stdout) {
+    const userMatch = result.stdout.match(/^user\s+(.+)$/m)
     if (userMatch) {
       const user = userMatch[1]
       return user === 'root' ? '/root' : `/home/${user}`
     }
-  } catch {
-    // ssh -G failed
   }
   return '~'
 }
@@ -435,18 +447,16 @@ export async function startMonitor(initialRemote: string): Promise<void> {
       log('  Clipboard detection disabled — file watcher still active.')
     }
 
-    // Initialize lastSeenScreenshotMtime to newest existing Screenshot file
+    // Initialize lastSeenScreenshotMtime to newest existing screenshot file
+    // (across all supported locale prefixes — see MAC_SCREENSHOT_FILENAME_RE)
     const screenshotDir = getMacScreenshotDir()
     try {
-      const files = fs
+      const mtimes = fs
         .readdirSync(screenshotDir)
-        .filter((f) => f.startsWith('Screenshot') && f.endsWith('.png'))
-        .map((f) => {
-          const stat = fs.statSync(path.join(screenshotDir, f))
-          return stat.mtimeMs
-        })
-      if (files.length > 0) {
-        lastSeenScreenshotMtime = Math.max(...files)
+        .filter(isMacScreenshotFilename)
+        .map((f) => fs.statSync(path.join(screenshotDir, f)).mtimeMs)
+      if (mtimes.length > 0) {
+        lastSeenScreenshotMtime = Math.max(...mtimes)
       }
     } catch {
       // Directory might not exist
@@ -501,8 +511,11 @@ export async function startMonitor(initialRemote: string): Promise<void> {
     }
   }
 
-  // Start polling
-  setInterval(poll, POLL_INTERVAL_MS)
+  // Start polling. Wrap the async poll() so setInterval gets a void-returning
+  // callback (otherwise no-misused-promises flags the unhandled Promise).
+  setInterval(() => {
+    void poll()
+  }, POLL_INTERVAL_MS)
 
   // Keep process running
   await new Promise(() => {})

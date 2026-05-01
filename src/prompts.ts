@@ -1,5 +1,9 @@
-// @ts-ignore
-const { Select, Confirm, Input, MultiSelect } = require('enquirer')
+import enquirer from 'enquirer'
+
+// enquirer's published .d.ts doesn't expose Select/Confirm/Input/MultiSelect
+// on the default export (the runtime does). Cast through `any` so the import
+// is ESM-clean without needing require() / @ts-ignore.
+const { Select, Confirm, Input, MultiSelect } = enquirer as any
 
 // Suppress enquirer's readline error on Ctrl+C (Node.js 24+ issue)
 process.on('uncaughtException', (err) => {
