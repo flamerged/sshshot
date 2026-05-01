@@ -601,18 +601,73 @@ function resolveActiveTarget(initialRemote: string): string {
   return lastValidTarget ?? initialRemote
 }
 
+// Maximum time we'll wait for in-flight uploads on graceful shutdown
+// before exiting anyway. Five seconds is long enough for a typical
+// screenshot (single-digit MB) to finish uploading over a fast SSH
+// connection, short enough that a hung remote doesn't make Ctrl+C feel
+// broken.
+const SHUTDOWN_GRACE_MS = 5000
+
 export async function startMonitor(initialRemote: string): Promise<void> {
+  // In-flight upload tracking so a SIGINT/SIGTERM mid-upload doesn't sever
+  // an SSH connection and leave a partial PNG on the remote. processNewImage
+  // calls register themselves in this set; the shutdown handler awaits them.
+  const inFlightUploads = new Set<Promise<unknown>>()
+  let shutdownRequested = false
+  let pollTimer: NodeJS.Timeout | null = null
+
+  function trackUpload<T>(p: Promise<T>): Promise<T> {
+    inFlightUploads.add(p)
+    void p.finally(() => inFlightUploads.delete(p))
+    return p
+  }
+
+  async function gracefulShutdown(signal: string): Promise<void> {
+    if (shutdownRequested) {
+      // Second signal — user clearly wants out. Skip the wait.
+      log(`Received second ${signal}; exiting immediately`)
+      removePidFile()
+      process.exit(1)
+    }
+    shutdownRequested = true
+
+    // Stop new polls from firing. In-flight ones will complete or be aborted
+    // by the timeout below.
+    if (pollTimer) clearInterval(pollTimer)
+
+    if (inFlightUploads.size === 0) {
+      log(`Received ${signal}; no in-flight uploads, exiting cleanly`)
+    } else {
+      log(
+        `Received ${signal}; waiting up to ${SHUTDOWN_GRACE_MS}ms for ` +
+          `${inFlightUploads.size} in-flight upload(s) to finish...`
+      )
+      const allDone = Promise.allSettled(Array.from(inFlightUploads))
+      const timedOut = new Promise<'timeout'>((resolve) =>
+        setTimeout(() => resolve('timeout'), SHUTDOWN_GRACE_MS)
+      )
+      const winner = await Promise.race([allDone.then(() => 'done' as const), timedOut])
+      if (winner === 'timeout' && inFlightUploads.size > 0) {
+        log(`  ${inFlightUploads.size} upload(s) still pending after grace period; exiting anyway`)
+      } else {
+        log('  All uploads completed.')
+      }
+    }
+    removePidFile()
+    process.exit(0)
+  }
+
   // Write PID file early so 'sshshot status' / 'stop' can find us reliably
-  // even if pgrep is a quirky busybox build. Cleanup is registered against
-  // the common exit signals so an Ctrl+C / SIGTERM removes the file.
+  // even if pgrep is a quirky busybox build. Cleanup happens via
+  // gracefulShutdown above, plus a defensive sync removePidFile on
+  // 'exit' for the case where the process dies via path the signal
+  // handlers don't cover (uncaught throw, etc.).
   writePidFile()
   process.once('SIGINT', () => {
-    removePidFile()
-    process.exit(0)
+    void gracefulShutdown('SIGINT')
   })
   process.once('SIGTERM', () => {
-    removePidFile()
-    process.exit(0)
+    void gracefulShutdown('SIGTERM')
   })
   process.on('exit', removePidFile)
 
@@ -700,16 +755,17 @@ export async function startMonitor(initialRemote: string): Promise<void> {
   }
 
   // Extracted helper so both the poll loop and the macOS fs.watch callback
-  // can drive the file-screenshot check.
+  // can drive the file-screenshot check. processNewImage's promise is
+  // tracked so graceful shutdown can wait for the upload to finish.
   const checkFileScreenshot = async (): Promise<void> => {
-    if (!isMac) return
+    if (!isMac || shutdownRequested) return
     const fileBuffer = getLatestMacScreenshot()
     if (!fileBuffer) return
     const fileHash = getImageHash(fileBuffer)
     if (fileHash !== lastFileHash && !wasRecentlyProcessed(fileHash)) {
       lastFileHash = fileHash
       markProcessed(fileHash)
-      await processNewImage(fileBuffer, currentRemote, 'file')
+      await trackUpload(processNewImage(fileBuffer, currentRemote, 'file'))
     }
   }
 
@@ -767,6 +823,7 @@ export async function startMonitor(initialRemote: string): Promise<void> {
   }
 
   const poll = async () => {
+    if (shutdownRequested) return
     try {
       // Re-resolve target each cycle so `sshshot target <name>` takes effect
       // without restarting the daemon.
@@ -784,7 +841,7 @@ export async function startMonitor(initialRemote: string): Promise<void> {
         if (currentHash !== lastClipboardHash && !wasRecentlyProcessed(currentHash)) {
           lastClipboardHash = currentHash
           markProcessed(currentHash)
-          await processNewImage(imageBuffer, currentRemote, 'clipboard')
+          await trackUpload(processNewImage(imageBuffer, currentRemote, 'clipboard'))
         }
       }
 
@@ -798,7 +855,7 @@ export async function startMonitor(initialRemote: string): Promise<void> {
 
   // Start polling. Wrap the async poll() so setInterval gets a void-returning
   // callback (otherwise no-misused-promises flags the unhandled Promise).
-  setInterval(() => {
+  pollTimer = setInterval(() => {
     void poll()
   }, POLL_INTERVAL_MS)
 
