@@ -465,12 +465,42 @@ async function processNewImage(
   }
 }
 
+// Last validated target (sticky cache so a hand-edit typo on
+// config.activeTarget doesn't make the daemon switch to a non-existent
+// remote and silently drop screenshots).
+let lastValidTarget: string | null = null
+// Last invalid value we already warned about — prevents log spam when the
+// poll loop reads the same bad config value 5 times per second.
+let lastWarnedInvalidTarget: string | null = null
+
 // Resolves the effective target on each poll: prefers config.activeTarget if
 // set (so `sshshot target <name>` switches the daemon at runtime without a
 // restart), falls back to the remote chosen at daemon-start otherwise.
+//
+// Validates the candidate against the configured remotes (+ "local"). If a
+// hand-edit set activeTarget to a typo'd or removed remote, we log a one-
+// shot warning and keep using the last known good target instead of
+// silently shipping screenshots into the void.
 function resolveActiveTarget(initialRemote: string): string {
   const config = loadConfig()
-  return config?.activeTarget ?? initialRemote
+  const candidate = config?.activeTarget ?? initialRemote
+  const valid = new Set<string>(['local', ...(config?.remotes ?? []), initialRemote])
+
+  if (valid.has(candidate)) {
+    lastValidTarget = candidate
+    lastWarnedInvalidTarget = null
+    return candidate
+  }
+
+  if (candidate !== lastWarnedInvalidTarget) {
+    const fallback = lastValidTarget ?? initialRemote
+    log(`Warning: config.activeTarget '${candidate}' is not in your configured remotes.`)
+    log(`  Known: ${[...valid].join(', ')}`)
+    log(`  Falling back to: ${fallback}`)
+    log(`  Fix: 'sshshot target <name>' or edit ~/.config/sshshot/config.json`)
+    lastWarnedInvalidTarget = candidate
+  }
+  return lastValidTarget ?? initialRemote
 }
 
 export async function startMonitor(initialRemote: string): Promise<void> {
