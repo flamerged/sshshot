@@ -92,13 +92,28 @@ Works out of the box — uses PowerShell's `System.Windows.Forms.Clipboard`. WSL
 ## Commands
 
 ```
-sshshot              first-time setup, then start the daemon
-sshshot start        start daemon (prompts for which remote)
-sshshot stop         stop the running daemon
-sshshot status       show running PID + target remote
-sshshot config       add/remove SSH remotes
-sshshot uninstall    stop daemon + remove ~/.config/sshshot
+sshshot                  first-time setup, then start the daemon
+sshshot start            start daemon (prompts for which remote)
+sshshot stop             stop the running daemon
+sshshot status           show running PID + target remote
+sshshot target           show current active target + available targets
+sshshot target <name>    switch active target without restarting the daemon
+sshshot config           add/remove SSH remotes
+sshshot uninstall        stop daemon + remove ~/.config/sshshot
 ```
+
+### Switching targets at runtime
+
+If you have multiple remotes configured and want to change which one screenshots ship to without stopping/starting the daemon, use `sshshot target`:
+
+```bash
+sshshot target myhost     # next screenshot goes to "myhost"
+sshshot target prod       # ...now "prod"
+sshshot target local      # local-mode (saves to ~/sshshot-screenshots)
+sshshot target            # show current active target
+```
+
+The daemon picks up the change on its next poll cycle (~200 ms). Works from any terminal, including Zed/VSCode integrated terminals — it's just a CLI command, no window-focus magic, no extra permissions.
 
 Logs land in `~/.config/sshshot/logs/sshshot-<timestamp>.log` (rotated hourly).
 

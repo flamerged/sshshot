@@ -10,6 +10,10 @@ export interface SSHHost {
 
 export interface Config {
   remotes: string[]
+  // Active target for the daemon. When set, the daemon switches to this remote
+  // on its next poll cycle without restarting. Updated via `sshshot target <name>`.
+  // Set to "local" to save screenshots locally instead of uploading.
+  activeTarget?: string
 }
 
 export function getConfigPath(): string {

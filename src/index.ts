@@ -160,14 +160,43 @@ function showHelp(): void {
   console.log(`Usage: sshshot <command>
 
 Commands:
-  start      Start monitoring in background
-  stop       Stop background process
-  status     Show if running
-  config     Modify configuration
-  uninstall  Remove config and stop process
+  start             Start monitoring in background
+  stop              Stop background process
+  status            Show if running
+  target [<name>]   Show or change the active target without restarting the daemon
+  config            Modify configuration
+  uninstall         Remove config and stop process
 
 Run without command to setup/configure.
 `)
+}
+
+function setActiveTarget(name: string | undefined): void {
+  const config = loadConfig()
+  if (!config) {
+    console.log("No configuration found. Run 'sshshot' first to set up remotes.")
+    process.exit(1)
+  }
+
+  // No-arg form: print current active target + available targets.
+  if (!name) {
+    const active = config.activeTarget ?? '(not set — daemon is using its start-time target)'
+    console.log(`Active target: ${active}`)
+    console.log(`Available:     local, ${config.remotes.join(', ') || '(no remotes configured)'}`)
+    return
+  }
+
+  const validTargets = ['local', ...config.remotes]
+  if (!validTargets.includes(name)) {
+    console.log(`Unknown target: ${name}`)
+    console.log(`Available:     ${validTargets.join(', ')}`)
+    process.exit(1)
+  }
+
+  saveConfig({ ...config, activeTarget: name })
+  console.log(`Active target set to: ${name}`)
+  // The running daemon (if any) re-reads config every poll cycle (~200 ms)
+  // and will switch on the next iteration. No restart needed.
 }
 
 function uninstall(): void {
@@ -270,6 +299,10 @@ async function startCommand(): Promise<void> {
     selected = await promptSelect('Select target', options)
   }
 
+  // Persist selection as activeTarget so `sshshot target` reflects it and
+  // future daemons read the right target after a restart.
+  saveConfig({ ...config, activeTarget: selected })
+
   // Stop any existing process before starting new one
   const count = killAllSshshotProcesses()
   if (count > 0) {
@@ -312,6 +345,11 @@ async function main(): Promise<void> {
 
   if (command === 'start') {
     await startCommand()
+    return
+  }
+
+  if (command === 'target') {
+    setActiveTarget(args[1])
     return
   }
 

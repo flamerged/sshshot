@@ -3,6 +3,7 @@ import * as crypto from 'crypto'
 import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
+import { loadConfig } from './config'
 
 const POLL_INTERVAL_MS = 200
 const LOG_MAX_AGE_MS = 60 * 60 * 1000 // 1 hour
@@ -401,17 +402,26 @@ async function processNewImage(
   }
 }
 
-export async function startMonitor(remote: string): Promise<void> {
+// Resolves the effective target on each poll: prefers config.activeTarget if
+// set (so `sshshot target <name>` switches the daemon at runtime without a
+// restart), falls back to the remote chosen at daemon-start otherwise.
+function resolveActiveTarget(initialRemote: string): string {
+  const config = loadConfig()
+  return config?.activeTarget ?? initialRemote
+}
+
+export async function startMonitor(initialRemote: string): Promise<void> {
   // Initialize logging
   logFile = createNewLogFile()
   logStartTime = Date.now()
 
   const wsl = isWSL()
   const env = isWindows ? 'Windows' : wsl ? 'WSL' : isMac ? 'macOS' : 'Linux'
-  log(`Starting monitor for: ${remote}`)
+  let currentRemote = resolveActiveTarget(initialRemote)
+  log(`Starting monitor for: ${currentRemote}`)
   log(`Environment: ${env}`)
   log(`Log file: ${logFile}`)
-  if (remote === 'local') {
+  if (currentRemote === 'local') {
     log(`Saving to: ${getLocalScreenshotDir()}`)
   }
 
@@ -456,6 +466,14 @@ export async function startMonitor(remote: string): Promise<void> {
 
   const poll = async () => {
     try {
+      // Re-resolve target each cycle so `sshshot target <name>` takes effect
+      // without restarting the daemon.
+      const target = resolveActiveTarget(initialRemote)
+      if (target !== currentRemote) {
+        log(`Active target changed: ${currentRemote} -> ${target}`)
+        currentRemote = target
+      }
+
       // Check clipboard
       const imageBuffer = await getClipboardImage()
 
@@ -463,7 +481,7 @@ export async function startMonitor(remote: string): Promise<void> {
         const currentHash = getImageHash(imageBuffer)
         if (currentHash !== lastClipboardHash) {
           lastClipboardHash = currentHash
-          await processNewImage(imageBuffer, remote, 'clipboard')
+          await processNewImage(imageBuffer, currentRemote, 'clipboard')
         }
       }
 
@@ -474,7 +492,7 @@ export async function startMonitor(remote: string): Promise<void> {
           const fileHash = getImageHash(fileBuffer)
           if (fileHash !== lastFileHash) {
             lastFileHash = fileHash
-            await processNewImage(fileBuffer, remote, 'file')
+            await processNewImage(fileBuffer, currentRemote, 'file')
           }
         }
       }
