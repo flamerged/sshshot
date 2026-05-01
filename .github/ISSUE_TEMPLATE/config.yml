@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question / Discussion
+    url: https://github.com/flamerged/sshshot/discussions
+    about: Use Discussions for general questions, configuration help, "is this safe to install" type concerns, etc.
+  - name: Security report
+    url: https://github.com/flamerged/sshshot/security/advisories/new
+    about: Report a security vulnerability privately. See SECURITY.md.

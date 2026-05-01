@@ -1,0 +1,67 @@
+name: Bug report
+description: Something is broken — screenshots not detected, paste not landing on clipboard, daemon misbehaving, etc.
+labels: ['bug']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. The fields below are the info I always end up asking for, so filling them in upfront saves us both time.
+
+  - type: input
+    id: version
+    attributes:
+      label: sshshot version
+      description: Output of `sshshot --version`
+      placeholder: '0.7.0'
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS
+        - Linux (Wayland)
+        - Linux (X11)
+        - Windows
+        - WSL
+    validations:
+      required: true
+
+  - type: input
+    id: node
+    attributes:
+      label: Node.js version
+      description: Output of `node --version`
+      placeholder: 'v22.x'
+    validations:
+      required: true
+
+  - type: dropdown
+    id: ssh-config
+    attributes:
+      label: Do you have an `~/.ssh/config` with the target remote configured?
+      options:
+        - 'Yes — host is in ~/.ssh/config'
+        - 'No — I added it manually via the prompt'
+        - "I'm using local mode (no SSH)"
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, what actually happened?
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Daemon log output
+      description: Last ~30 lines from `~/.config/sshshot/logs/sshshot-<latest>.log`. Redact any hostnames you don't want public.
+      render: shell
+    validations:
+      required: false

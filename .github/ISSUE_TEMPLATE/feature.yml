@@ -1,0 +1,27 @@
+name: Feature request
+description: Suggest a behavior change, new platform, or new integration
+labels: ['enhancement']
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What's missing or awkward about sshshot today?
+    validations:
+      required: true
+
+  - type: textarea
+    id: idea
+    attributes:
+      label: Proposed solution
+      description: What you'd like to see. Rough sketches are fine.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other tools, workflows, or workarounds you've tried.
+    validations:
+      required: false

@@ -1,6 +1,12 @@
 # sshshot
 
-**Take a screenshot locally → it auto-uploads via SSH → the remote file path lands on your clipboard.** Built for pasting screenshots into Claude Code, OpenAI Codex, or any other AI agent running over SSH on a remote box, where you can't drag-and-drop images. macOS, Linux (X11 & Wayland), Windows, WSL.
+[![npm version](https://img.shields.io/npm/v/@flamerged/sshshot.svg)](https://www.npmjs.com/package/@flamerged/sshshot)
+[![npm downloads](https://img.shields.io/npm/dw/@flamerged/sshshot.svg)](https://www.npmjs.com/package/@flamerged/sshshot)
+[![license](https://img.shields.io/npm/l/@flamerged/sshshot.svg)](./LICENSE)
+[![CI](https://github.com/flamerged/sshshot/actions/workflows/ci.yml/badge.svg)](https://github.com/flamerged/sshshot/actions/workflows/ci.yml)
+[![provenance](https://img.shields.io/badge/npm-provenance-blue?logo=npm)](https://docs.npmjs.com/generating-provenance-statements)
+
+**Take a screenshot locally → it auto-uploads via SSH → the remote file path lands on your clipboard.** Built for pasting screenshots into Claude Code, OpenAI Codex, Aider, or any other AI agent running over SSH on a remote box, where you can't drag-and-drop images. macOS, Linux (X11 & Wayland), Windows, WSL.
 
 ```bash
 npm install -g @flamerged/sshshot
@@ -153,14 +159,22 @@ You'd still need a server to receive uploads, and AI agents running over SSH don
 
 ## Roadmap
 
-- [ ] Replace 200 ms polling with `fs.watch` / `chokidar` for the macOS screenshot folder
-- [ ] Localized macOS screenshot filename matching (currently English-only `Screenshot*.png`; missing Bildschirmfoto, Capture d'écran, etc.)
 - [ ] Record macOS demo gif (current `demo-windows.gif` is the upstream Windows/PowerShell flow)
-- [ ] Record Linux X11 demo gif
-- [ ] Test suite (Vitest)
-- [ ] Optional inline image paste (instead of path) for tools that accept multipart pastes — out of scope today, future ergonomic win
-- [ ] Migrate `execSync` shell calls to `spawnSync` with array args — eliminates remaining shell-injection surface (`getRemoteHomePath`'s `ssh -G ${remote}` etc.)
+- [ ] Record Linux X11 / Wayland demo gif
+- [ ] Optional inline image paste (instead of path) for tools that accept multipart pastes — future ergonomic win
 - [ ] File Socket.dev false-positive review request once Supply Chain score plateaus
+
+### Already shipped (kept for context)
+
+- ✅ macOS support (clipboard via `pngpaste` + screenshot-folder file watcher)
+- ✅ Linux Wayland clipboard via `wl-clipboard` (X11 still supported via `xclip`)
+- ✅ Localized macOS screenshot filenames (de, fr, es, pt, it, nl, sv, no, da, ja, ko, ru)
+- ✅ `fs.watch` event-driven detection (replaced 200ms polling on macOS, polling kept as backstop)
+- ✅ `spawnSync` migration for `ssh -G` and clipboard-write paths (no shell-interpolation surface)
+- ✅ Vitest test suite + CI (filename matching, hash dedupe, ssh-config parsing, safe-filename guard)
+- ✅ npm Trusted Publishing via OIDC + Sigstore provenance attestations
+- ✅ Conventional Commits + commitlint + branch-name enforcement (Husky)
+- ✅ Auto-publishing via semantic-release (`fix:` → patch, `feat:` → minor, breaking is manual)
 
 ## Security
 
