@@ -372,16 +372,24 @@ export function getImageHash(buffer: Buffer): string {
 }
 
 export function generateFilename(): string {
+  // Include milliseconds + a 4-char random suffix so two screenshots taken
+  // in the same second don't collide on the remote (Cmd+Shift+3 spam,
+  // back-to-back paste from clipboard, etc). The previous one-per-second
+  // resolution silently overwrote earlier images.
   const now = new Date()
-  const timestamp = now.toISOString().replace(/[:.]/g, '-').slice(0, 19)
-  return `screenshot-${timestamp}.png`
+  // toISOString() → 2026-05-01T12:34:56.789Z → slice off the trailing 'Z'
+  // and dot/colon-replace → 2026-05-01T12-34-56-789
+  const timestamp = now.toISOString().replace(/[:.]/g, '-').slice(0, 23)
+  const suffix = crypto.randomBytes(2).toString('hex') // 4 hex chars
+  return `screenshot-${timestamp}-${suffix}.png`
 }
 
 // Defensive: pipeToRemote interpolates `filename` into a remote shell
 // command. generateFilename() only produces strings matching this regex
 // today, but if generation ever changes (e.g. accepts user input), this
 // guard keeps the shell-injection surface closed.
-export const SAFE_REMOTE_FILENAME_RE = /^screenshot-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}\.png$/
+export const SAFE_REMOTE_FILENAME_RE =
+  /^screenshot-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}-[0-9a-f]{4}\.png$/
 
 function getLocalScreenshotDir(): string {
   return path.join(os.homedir(), 'sshshot-screenshots')
@@ -401,26 +409,58 @@ function saveLocal(imageBuffer: Buffer, filename: string): { success: boolean; p
   }
 }
 
+// Cache `$HOME` per remote so we don't open a new SSH connection on every
+// upload. ControlMaster setups make this near-free, but plenty of users
+// don't enable it — and the cost is one extra round-trip per first upload
+// to a remote per daemon lifetime.
+const remoteHomeCache = new Map<string, string>()
+
 function getRemoteHomePath(remote: string): string {
-  // Extract username from user@host format
-  const match = remote.match(/^([^@]+)@/)
-  if (match) {
-    const user = match[1]
-    return user === 'root' ? '/root' : `/home/${user}`
-  }
-  // Named host without user — resolve via `ssh -G`. Use spawnSync with array
-  // args (NOT execSync with a template string) so a maliciously-crafted
-  // `remote` containing shell metacharacters cannot inject. The `remote`
-  // value comes from the user's own ~/.ssh/config which is normally trusted,
-  // but defense in depth is cheap.
-  const result = spawnSync('ssh', ['-G', remote], { encoding: 'utf8', timeout: 3000 })
-  if (result.status === 0 && result.stdout) {
-    const userMatch = result.stdout.match(/^user\s+(.+)$/m)
-    if (userMatch) {
-      const user = userMatch[1]
-      return user === 'root' ? '/root' : `/home/${user}`
+  const cached = remoteHomeCache.get(remote)
+  if (cached !== undefined) return cached
+
+  // Primary: ask the remote directly. Handles non-standard home dirs
+  // (/Users/<user> on macOS, /data/<user> on some configs, custom HOME
+  // overrides in /etc/passwd). Spawn with array args — no shell.
+  const echoResult = spawnSync(
+    'ssh',
+    ['-o', 'ConnectTimeout=5', '-o', 'BatchMode=yes', remote, 'echo $HOME'],
+    { encoding: 'utf8', timeout: 7000 }
+  )
+  if (echoResult.status === 0 && echoResult.stdout) {
+    const home = echoResult.stdout.trim()
+    if (home.startsWith('/')) {
+      remoteHomeCache.set(remote, home)
+      return home
     }
   }
+
+  // Fallback 1: extract username from user@host format and guess.
+  const userAtHost = remote.match(/^([^@]+)@/)
+  if (userAtHost) {
+    const user = userAtHost[1]
+    const guess = user === 'root' ? '/root' : `/home/${user}`
+    remoteHomeCache.set(remote, guess)
+    return guess
+  }
+
+  // Fallback 2: named host without user — resolve via `ssh -G` and guess.
+  // Use spawnSync with array args so a maliciously-crafted `remote`
+  // containing shell metacharacters cannot inject.
+  const sshGResult = spawnSync('ssh', ['-G', remote], { encoding: 'utf8', timeout: 3000 })
+  if (sshGResult.status === 0 && sshGResult.stdout) {
+    const userMatch = sshGResult.stdout.match(/^user\s+(.+)$/m)
+    if (userMatch) {
+      const user = userMatch[1]
+      const guess = user === 'root' ? '/root' : `/home/${user}`
+      remoteHomeCache.set(remote, guess)
+      return guess
+    }
+  }
+
+  // Last resort — shell ~ expansion on the remote will still resolve correctly
+  // for the displayed path; only the absolute path shown to the user is
+  // approximate.
   return '~'
 }
 
@@ -441,10 +481,17 @@ async function pipeToRemote(
   const remotePath = `${homeDir}/sshshot-screenshots/${filename}`
 
   return new Promise((resolve) => {
-    // Use ~ in the command so SSH resolves it correctly
+    // Use ~ in the command so SSH resolves it correctly. ConnectTimeout=5
+    // fails fast (~5s) on an unreachable remote instead of letting SSH's
+    // default ~75s TCP retry leave the daemon spinning on a stuck upload.
     const proc = spawn(
       'ssh',
-      [remote, `mkdir -p ~/sshshot-screenshots && cat > ~/sshshot-screenshots/${filename}`],
+      [
+        '-o',
+        'ConnectTimeout=5',
+        remote,
+        `mkdir -p ~/sshshot-screenshots && cat > ~/sshshot-screenshots/${filename}`
+      ],
       {
         windowsHide: true
       }

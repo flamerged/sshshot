@@ -31,6 +31,14 @@ export function getPidFile(): string {
   return path.join(getConfigDir(), 'sshshot.pid')
 }
 
+// Throttle repeat warnings — the daemon calls loadConfig 5x/sec, so a
+// persistent broken file would otherwise log the same line every 200ms.
+// Tracking the last error string per category makes log spam stop after
+// the first occurrence and resume only when the error message changes
+// (e.g. the user partially fixes the file).
+let lastReadErrorMessage: string | null = null
+let lastParseErrorMessage: string | null = null
+
 export function loadConfig(): Config | null {
   const configPath = getConfigPath()
   if (!fs.existsSync(configPath)) {
@@ -40,22 +48,33 @@ export function loadConfig(): Config | null {
   try {
     content = fs.readFileSync(configPath, 'utf-8')
   } catch (err) {
-    process.stderr.write(
-      `sshshot: could not read config at ${configPath}: ${(err as Error).message}\n`
-    )
+    const msg = (err as Error).message
+    if (msg !== lastReadErrorMessage) {
+      process.stderr.write(`sshshot: could not read config at ${configPath}: ${msg}\n`)
+      lastReadErrorMessage = msg
+    }
     return null
   }
+  // Successful read — clear any prior read-error suppression so a future
+  // failure with the same message does log again.
+  lastReadErrorMessage = null
   try {
-    return JSON.parse(content) as Config
+    const parsed = JSON.parse(content) as Config
+    lastParseErrorMessage = null
+    return parsed
   } catch (err) {
     // The previous behavior was to throw, which crashed the daemon's poll
     // loop. With this guard the daemon falls back to its start-time target
     // (resolveActiveTarget treats null config as 'no override') and logs
     // a one-shot warning so the user can fix the file.
-    process.stderr.write(
-      `sshshot: config at ${configPath} is not valid JSON (${(err as Error).message}). ` +
-        `Falling back to defaults; re-run 'sshshot' to recreate.\n`
-    )
+    const msg = (err as Error).message
+    if (msg !== lastParseErrorMessage) {
+      process.stderr.write(
+        `sshshot: config at ${configPath} is not valid JSON (${msg}). ` +
+          `Falling back to defaults; re-run 'sshshot' to recreate.\n`
+      )
+      lastParseErrorMessage = msg
+    }
     return null
   }
 }
