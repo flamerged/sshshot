@@ -1,9 +1,11 @@
 {
   "name": "@flamerged/sshshot",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Screenshot relay for SSH workflows — take a screenshot locally, it auto-uploads to your remote box and pastes the remote path back to your clipboard. macOS, Linux (X11), Windows, WSL.",
   "main": "dist/index.js",
-  "bin": "dist/index.js",
+  "bin": {
+    "sshshot": "dist/index.js"
+  },
   "files": [
     "dist",
     "README.md",

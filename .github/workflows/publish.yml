@@ -39,7 +39,5 @@ jobs:
             exit 1
           fi
 
-      - name: Publish to npm
-        run: yarn npm publish
-        env:
-          YARN_NPM_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Publish to npm (Trusted Publishing via OIDC)
+        run: npm publish --provenance --access public
