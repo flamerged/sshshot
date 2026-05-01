@@ -60,7 +60,10 @@ jobs:
       - name: Capture package.json version before sr
         if: github.ref == 'refs/heads/master'
         id: ver_before
-        run: echo "version=$(node -p 'require(\"./package.json\").version')" >> "$GITHUB_OUTPUT"
+        run: |
+          version=$(node -p "require('./package.json').version")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Captured pre-sr version: $version"
 
       - name: Run semantic-release
         if: github.ref == 'refs/heads/master'
