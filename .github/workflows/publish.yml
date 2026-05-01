@@ -18,13 +18,17 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
+          cache: "yarn"
           registry-url: "https://registry.npmjs.org"
 
+      - name: Enable corepack
+        run: corepack enable
+
       - name: Install
-        run: npm ci
+        run: yarn install --immutable
 
       - name: Build
-        run: npm run build
+        run: yarn build
 
       - name: Verify package version matches tag
         run: |
@@ -36,6 +40,6 @@ jobs:
           fi
 
       - name: Publish to npm
-        run: npm publish
+        run: yarn npm publish
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          YARN_NPM_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

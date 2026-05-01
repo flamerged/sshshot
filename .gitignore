@@ -4,6 +4,15 @@ dist/
 # macOS
 .DS_Store
 
+# Yarn 4 (Berry) — keep config and patches, ignore caches/installs
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/sdks
+!.yarn/versions
+.pnp.*
+
 # Claude Code (local-only, not committed)
 CLAUDE.md
 .claude/
