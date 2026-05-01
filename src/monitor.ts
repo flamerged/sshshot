@@ -33,14 +33,42 @@ function isWSL(): boolean {
   }
 }
 
+function getConfigDir(): string {
+  return path.join(os.homedir(), '.config', 'sshshot')
+}
+
 function getLogDir(): string {
-  return path.join(os.homedir(), '.config', 'sshshot', 'logs')
+  return path.join(getConfigDir(), 'logs')
 }
 
 function ensureLogDir(): void {
   const logDir = getLogDir()
   if (!fs.existsSync(logDir)) {
     fs.mkdirSync(logDir, { recursive: true })
+  }
+}
+
+// PID file path. Written by the daemon at startup so process discovery for
+// 'sshshot stop'/'status' is a single fs read instead of a fragile pgrep
+// regex (which has known portability issues across pgrep variants —
+// BusyBox/Alpine notably).
+function getPidFile(): string {
+  return path.join(getConfigDir(), 'sshshot.pid')
+}
+
+function writePidFile(): void {
+  const dir = getConfigDir()
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true })
+  }
+  fs.writeFileSync(getPidFile(), String(process.pid))
+}
+
+function removePidFile(): void {
+  try {
+    fs.unlinkSync(getPidFile())
+  } catch {
+    // already gone or unwritable; nothing to do
   }
 }
 
@@ -446,6 +474,20 @@ function resolveActiveTarget(initialRemote: string): string {
 }
 
 export async function startMonitor(initialRemote: string): Promise<void> {
+  // Write PID file early so 'sshshot status' / 'stop' can find us reliably
+  // even if pgrep is a quirky busybox build. Cleanup is registered against
+  // the common exit signals so an Ctrl+C / SIGTERM removes the file.
+  writePidFile()
+  process.once('SIGINT', () => {
+    removePidFile()
+    process.exit(0)
+  })
+  process.once('SIGTERM', () => {
+    removePidFile()
+    process.exit(0)
+  })
+  process.on('exit', removePidFile)
+
   // Initialize logging
   logFile = createNewLogFile()
   logStartTime = Date.now()

@@ -15,12 +15,45 @@ interface ProcessInfo {
   command: string
 }
 
+function getPidFile(): string {
+  return path.join(os.homedir(), '.config', 'sshshot', 'sshshot.pid')
+}
+
+// Returns true if a process with the given pid is alive on the current host.
+// `process.kill(pid, 0)` is the standard cross-platform liveness probe.
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+// Primary: read the PID file the daemon writes at startup. Cross-platform,
+// fast (single fs read), no shell quirks. Falls back to pgrep / PowerShell
+// only if the PID file is missing or stale (orphan recovery).
 function findSshshotProcesses(): ProcessInfo[] {
   const processes: ProcessInfo[] = []
 
+  // Primary: PID file
+  try {
+    const raw = fs.readFileSync(getPidFile(), 'utf-8').trim()
+    const pid = parseInt(raw, 10)
+    if (!isNaN(pid) && pid !== process.pid && isProcessAlive(pid)) {
+      processes.push({ pid, command: 'sshshot --daemon (from pid file)' })
+      return processes
+    }
+  } catch {
+    // PID file missing or unreadable; fall through to legacy discovery
+  }
+
+  // Fallback: legacy process-listing scan. Used only if the PID file is
+  // absent (older daemon, manual cleanup, or daemon launched with the binary
+  // moved). Has known fragility on minimal pgrep variants (BusyBox/Alpine);
+  // hence the PID-file primary path above.
   try {
     if (isWindows) {
-      // Use PowerShell to get node processes with command line (WMIC is deprecated)
       const psScript = `$ProgressPreference = 'SilentlyContinue'; Get-CimInstance Win32_Process -Filter "name = 'node.exe'" | Where-Object { $_.CommandLine -like '*sshshot*' -and $_.CommandLine -like '*--daemon*' } | Select-Object ProcessId,CommandLine | ConvertTo-Csv -NoTypeInformation`
       const encoded = Buffer.from(psScript, 'utf16le').toString('base64')
       const result = execSync(
@@ -29,9 +62,7 @@ function findSshshotProcesses(): ProcessInfo[] {
       )
 
       for (const line of result.split('\n').slice(1)) {
-        // Skip header
         if (!line.trim()) continue
-        // CSV format: "ProcessId","CommandLine"
         const match = line.match(/"(\d+)","(.*)"/)
         if (match) {
           const pid = parseInt(match[1])
@@ -41,7 +72,6 @@ function findSshshotProcesses(): ProcessInfo[] {
         }
       }
     } else {
-      // Unix: use pgrep
       const result = execSync("pgrep -af 'node.*[s]shshot.*--daemon'", { encoding: 'utf8' })
       for (const line of result.trim().split('\n').filter(Boolean)) {
         const pid = parseInt(line.split(/\s+/)[0])
@@ -208,7 +238,7 @@ function uninstall(): void {
     console.log('Stopped running process')
   }
 
-  // Remove config directory
+  // Remove config directory (which also takes the pid file with it).
   const configDir = path.join(os.homedir(), '.config', 'sshshot')
   if (fs.existsSync(configDir)) {
     fs.rmSync(configDir, { recursive: true })
