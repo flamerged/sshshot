@@ -38,15 +38,9 @@ export function saveConfig(config: Config): void {
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n')
 }
 
-export function detectSSHRemotes(): SSHHost[] {
-  const home = os.homedir()
-  const sshConfigPath = path.join(home, '.ssh', 'config')
-
-  if (!fs.existsSync(sshConfigPath)) {
-    return []
-  }
-
-  const content = fs.readFileSync(sshConfigPath, 'utf-8')
+// Pure parser, exported for tests. Takes the raw text of an ssh_config and
+// returns the Host blocks (excluding wildcard patterns).
+export function parseSSHConfig(content: string): SSHHost[] {
   const lines = content.split('\n')
   const hosts: SSHHost[] = []
   let currentHost: SSHHost | null = null
@@ -78,4 +72,15 @@ export function detectSSHRemotes(): SSHHost[] {
   }
 
   return hosts
+}
+
+export function detectSSHRemotes(): SSHHost[] {
+  const home = os.homedir()
+  const sshConfigPath = path.join(home, '.ssh', 'config')
+
+  if (!fs.existsSync(sshConfigPath)) {
+    return []
+  }
+
+  return parseSSHConfig(fs.readFileSync(sshConfigPath, 'utf-8'))
 }

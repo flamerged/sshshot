@@ -9,13 +9,13 @@ import importPlugin from 'eslint-plugin-import'
 // catch real bugs in async/shell-out code.
 export default [
   {
-    files: ['**/*.ts'],
+    files: ['src/**/*.ts', 'test/**/*.ts'],
     languageOptions: {
       parser: tsparser,
       parserOptions: {
         ecmaVersion: 2022,
         sourceType: 'module',
-        project: './tsconfig.json'
+        project: './tsconfig.eslint.json'
       }
     },
     plugins: {
@@ -57,7 +57,7 @@ export default [
     settings: {
       'import/resolver': {
         node: true,
-        typescript: { alwaysTryTypes: true, project: './tsconfig.json' }
+        typescript: { alwaysTryTypes: true, project: './tsconfig.eslint.json' }
       }
     }
   },
