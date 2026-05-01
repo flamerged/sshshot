@@ -350,6 +350,12 @@ function generateFilename(): string {
   return `screenshot-${timestamp}.png`
 }
 
+// Defensive: pipeToRemote interpolates `filename` into a remote shell
+// command. generateFilename() only produces strings matching this regex
+// today, but if generation ever changes (e.g. accepts user input), this
+// guard keeps the shell-injection surface closed.
+const SAFE_REMOTE_FILENAME_RE = /^screenshot-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}\.png$/
+
 function getLocalScreenshotDir(): string {
   return path.join(os.homedir(), 'sshshot-screenshots')
 }
@@ -396,6 +402,14 @@ async function pipeToRemote(
   remote: string,
   filename: string
 ): Promise<{ success: boolean; path: string; error?: string }> {
+  if (!SAFE_REMOTE_FILENAME_RE.test(filename)) {
+    return Promise.resolve({
+      success: false,
+      path: '',
+      error: `Refusing to ssh-pipe with unexpected filename shape: ${JSON.stringify(filename)}`
+    })
+  }
+
   const homeDir = getRemoteHomePath(remote)
   const remotePath = `${homeDir}/sshshot-screenshots/${filename}`
 
