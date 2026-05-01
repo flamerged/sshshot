@@ -25,8 +25,28 @@ export function loadConfig(): Config | null {
   if (!fs.existsSync(configPath)) {
     return null
   }
-  const content = fs.readFileSync(configPath, 'utf-8')
-  return JSON.parse(content)
+  let content: string
+  try {
+    content = fs.readFileSync(configPath, 'utf-8')
+  } catch (err) {
+    process.stderr.write(
+      `sshshot: could not read config at ${configPath}: ${(err as Error).message}\n`
+    )
+    return null
+  }
+  try {
+    return JSON.parse(content) as Config
+  } catch (err) {
+    // The previous behavior was to throw, which crashed the daemon's poll
+    // loop. With this guard the daemon falls back to its start-time target
+    // (resolveActiveTarget treats null config as 'no override') and logs
+    // a one-shot warning so the user can fix the file.
+    process.stderr.write(
+      `sshshot: config at ${configPath} is not valid JSON (${(err as Error).message}). ` +
+        `Falling back to defaults; re-run 'sshshot' to recreate.\n`
+    )
+    return null
+  }
 }
 
 export function saveConfig(config: Config): void {
