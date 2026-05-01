@@ -409,15 +409,18 @@ export function getImageHash(buffer: Buffer): string {
 }
 
 export function generateFilename(): string {
-  // Include milliseconds + a 4-char random suffix so two screenshots taken
-  // in the same second don't collide on the remote (Cmd+Shift+3 spam,
-  // back-to-back paste from clipboard, etc). The previous one-per-second
-  // resolution silently overwrote earlier images.
+  // Include milliseconds + an 8-char random suffix so two screenshots taken
+  // in the same millisecond don't collide on the remote (Cmd+Shift+3 spam,
+  // back-to-back paste from clipboard, etc). 4 random bytes = 4.3B buckets;
+  // collision probability for 100 same-ms calls is ~10⁻⁶ — small enough
+  // for the test loop to be deterministic. (The original 4-char/65K-bucket
+  // version had a ~7% birthday-collision rate at 100 trials and produced
+  // a Node-24-only flake — see PR #22 / commit history.)
   const now = new Date()
   // toISOString() → 2026-05-01T12:34:56.789Z → slice off the trailing 'Z'
   // and dot/colon-replace → 2026-05-01T12-34-56-789
   const timestamp = now.toISOString().replace(/[:.]/g, '-').slice(0, 23)
-  const suffix = crypto.randomBytes(2).toString('hex') // 4 hex chars
+  const suffix = crypto.randomBytes(4).toString('hex') // 8 hex chars
   return `screenshot-${timestamp}-${suffix}.png`
 }
 
@@ -426,7 +429,7 @@ export function generateFilename(): string {
 // today, but if generation ever changes (e.g. accepts user input), this
 // guard keeps the shell-injection surface closed.
 export const SAFE_REMOTE_FILENAME_RE =
-  /^screenshot-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}-[0-9a-f]{4}\.png$/
+  /^screenshot-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}-[0-9a-f]{8}\.png$/
 
 function getLocalScreenshotDir(): string {
   return path.join(os.homedir(), 'sshshot-screenshots')
