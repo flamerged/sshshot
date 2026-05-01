@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   MAC_SCREENSHOT_FILENAME_RE,
   SAFE_REMOTE_FILENAME_RE,
+  buildCustomScreenshotRegex,
   generateFilename,
   getImageHash,
   isMacScreenshotFilename
@@ -104,6 +105,35 @@ describe('SAFE_REMOTE_FILENAME_RE', () => {
 
   it('accepts the canonical generateFilename output', () => {
     expect(SAFE_REMOTE_FILENAME_RE.test('screenshot-2026-05-01T12-34-56-789-abcd.png')).toBe(true)
+  })
+})
+
+describe('buildCustomScreenshotRegex', () => {
+  it('matches a custom prefix the user set via `defaults write`', () => {
+    const re = buildCustomScreenshotRegex('MyShot')
+    expect(re.test('MyShot 2026-05-01 at 12.34.56.png')).toBe(true)
+    expect(re.test('MyShot.png')).toBe(true)
+  })
+
+  it('rejects similar-but-wrong prefixes', () => {
+    const re = buildCustomScreenshotRegex('MyShot')
+    expect(re.test('MyShots 2026-05-01.png')).toBe(false)
+    expect(re.test('NotMyShot 2026-05-01.png')).toBe(false)
+    expect(re.test('Screenshot 2026-05-01.png')).toBe(false)
+  })
+
+  it('escapes regex metacharacters in the prefix', () => {
+    // A user with a literal `+` in their prefix shouldn't accidentally turn
+    // the previous char into "one or more" — escapes must be applied.
+    const re = buildCustomScreenshotRegex('a+b')
+    expect(re.test('a+b 2026-05-01.png')).toBe(true)
+    // 'aab' would only match if `+` were the regex quantifier — confirm escape.
+    expect(re.test('aab 2026-05-01.png')).toBe(false)
+  })
+
+  it('throws on empty/whitespace-only input', () => {
+    expect(() => buildCustomScreenshotRegex('')).toThrow()
+    expect(() => buildCustomScreenshotRegex('   ')).toThrow()
   })
 })
 
