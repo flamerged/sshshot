@@ -646,6 +646,57 @@ export async function startMonitor(initialRemote: string): Promise<void> {
     lastClipboardHash = getImageHash(initialImage)
   }
 
+  // Extracted helper so both the poll loop and the macOS fs.watch callback
+  // can drive the file-screenshot check.
+  const checkFileScreenshot = async (): Promise<void> => {
+    if (!isMac) return
+    const fileBuffer = getLatestMacScreenshot()
+    if (!fileBuffer) return
+    const fileHash = getImageHash(fileBuffer)
+    if (fileHash !== lastFileHash && !wasRecentlyProcessed(fileHash)) {
+      lastFileHash = fileHash
+      markProcessed(fileHash)
+      await processNewImage(fileBuffer, currentRemote, 'file')
+    }
+  }
+
+  // macOS: prefer event-driven detection via fs.watch over the 200ms
+  // readdir/stat poll. The screenshot dir typically has many files so
+  // every poll was running readdir + stat over the whole list — wasted
+  // CPU. fs.watch wakes us only when something changes.
+  //
+  // Caveats:
+  // - debounce 300ms after the last event so a multi-write screenshot
+  //   (write+close+rename sequence from screencapture) is read once
+  //   when stable, not three times mid-write
+  // - fs.watch is best-effort: it can miss events on network mounts,
+  //   sandboxed dirs, or some macOS edge cases — the poll loop below
+  //   keeps calling checkFileScreenshot() as a backstop
+  let watcher: fs.FSWatcher | null = null
+  let watchDebounce: NodeJS.Timeout | null = null
+  if (isMac) {
+    try {
+      const screenshotDir = getMacScreenshotDir()
+      watcher = fs.watch(screenshotDir, (_event, filename) => {
+        if (!filename || !isMacScreenshotFilename(filename)) return
+        if (watchDebounce) clearTimeout(watchDebounce)
+        watchDebounce = setTimeout(() => {
+          watchDebounce = null
+          void checkFileScreenshot()
+        }, 300)
+      })
+      log(`fs.watch active on ${screenshotDir}`)
+    } catch (err) {
+      log(`fs.watch setup failed; using polling fallback: ${err as Error}`)
+    }
+
+    // Cleanup the watcher on the same exit signals as the PID file.
+    process.on('exit', () => {
+      if (watcher) watcher.close()
+      if (watchDebounce) clearTimeout(watchDebounce)
+    })
+  }
+
   const poll = async () => {
     try {
       // Re-resolve target each cycle so `sshshot target <name>` takes effect
@@ -668,18 +719,9 @@ export async function startMonitor(initialRemote: string): Promise<void> {
         }
       }
 
-      // On macOS, also check for new screenshot files (Cmd+Shift screenshots)
-      if (isMac) {
-        const fileBuffer = getLatestMacScreenshot()
-        if (fileBuffer) {
-          const fileHash = getImageHash(fileBuffer)
-          if (fileHash !== lastFileHash && !wasRecentlyProcessed(fileHash)) {
-            lastFileHash = fileHash
-            markProcessed(fileHash)
-            await processNewImage(fileBuffer, currentRemote, 'file')
-          }
-        }
-      }
+      // macOS file watcher: served primarily by fs.watch above; this poll
+      // remains as a safety net if fs.watch missed an event.
+      await checkFileScreenshot()
     } catch (err) {
       log(`Error: ${err}`)
     }
