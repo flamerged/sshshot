@@ -3,7 +3,7 @@ import * as crypto from 'crypto'
 import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
-import { loadConfig } from './config'
+import { getConfigDir, getPidFile, loadConfig } from './config'
 
 const POLL_INTERVAL_MS = 200
 const LOG_MAX_AGE_MS = 60 * 60 * 1000 // 1 hour — rotate to a new file
@@ -63,10 +63,6 @@ function isWaylandSession(): boolean {
   return typeof wd === 'string' && wd.length > 0
 }
 
-function getConfigDir(): string {
-  return path.join(os.homedir(), '.config', 'sshshot')
-}
-
 function getLogDir(): string {
   return path.join(getConfigDir(), 'logs')
 }
@@ -78,14 +74,8 @@ function ensureLogDir(): void {
   }
 }
 
-// PID file path. Written by the daemon at startup so process discovery for
-// 'sshshot stop'/'status' is a single fs read instead of a fragile pgrep
-// regex (which has known portability issues across pgrep variants —
-// BusyBox/Alpine notably).
-function getPidFile(): string {
-  return path.join(getConfigDir(), 'sshshot.pid')
-}
-
+// Pid-file helpers. The path itself comes from config.ts so monitor.ts
+// (writer) and index.ts (reader) can't drift.
 function writePidFile(): void {
   const dir = getConfigDir()
   if (!fs.existsSync(dir)) {
@@ -233,76 +223,67 @@ if ($img -ne $null) {
 }
 
 async function getClipboardImageX11(): Promise<Buffer | null> {
-  try {
-    // Check if clipboard has image using xclip
-    const targets = execSync('xclip -selection clipboard -t TARGETS -o 2>/dev/null', {
-      encoding: 'utf8',
-      timeout: 2000
-    })
+  // Check if clipboard has an image. Array args, no shell — consistent with
+  // the rest of the spawnSync migration.
+  const targets = spawnSync('xclip', ['-selection', 'clipboard', '-t', 'TARGETS', '-o'], {
+    encoding: 'utf8',
+    timeout: 2000
+  })
+  if (targets.status !== 0 || !targets.stdout) return null
+  if (!targets.stdout.includes('image/png')) return null
 
-    if (!targets.includes('image/png')) {
-      return null
-    }
-
-    // Get image data
-    const imageData = execSync('xclip -selection clipboard -t image/png -o 2>/dev/null', {
-      encoding: 'buffer',
-      timeout: 5000,
-      maxBuffer: 50 * 1024 * 1024 // 50MB max
-    })
-
-    return imageData.length > 0 ? imageData : null
-  } catch {
-    return null
-  }
+  const imageData = spawnSync('xclip', ['-selection', 'clipboard', '-t', 'image/png', '-o'], {
+    encoding: 'buffer',
+    timeout: 5000,
+    maxBuffer: 50 * 1024 * 1024 // 50MB max
+  })
+  if (imageData.status !== 0 || !imageData.stdout) return null
+  return imageData.stdout.length > 0 ? imageData.stdout : null
 }
 
 async function getClipboardImageWayland(): Promise<Buffer | null> {
-  try {
-    // wl-paste --list-types is fast and tells us if the clipboard holds an
-    // image at all — avoids loading binary data when not needed.
-    const types = execSync('wl-paste --list-types 2>/dev/null', {
-      encoding: 'utf8',
-      timeout: 2000
-    })
-    if (!types.includes('image/png')) return null
+  // wl-paste --list-types tells us if the clipboard holds an image at all,
+  // avoiding loading binary data on every poll when no image is present.
+  const types = spawnSync('wl-paste', ['--list-types'], {
+    encoding: 'utf8',
+    timeout: 2000
+  })
+  if (types.status !== 0 || !types.stdout) return null
+  if (!types.stdout.includes('image/png')) return null
 
-    const imageData = execSync('wl-paste --type image/png --no-newline 2>/dev/null', {
-      encoding: 'buffer',
-      timeout: 5000,
-      maxBuffer: 50 * 1024 * 1024 // 50MB max
-    })
-    return imageData.length > 0 ? imageData : null
-  } catch {
-    return null
-  }
+  const imageData = spawnSync('wl-paste', ['--type', 'image/png', '--no-newline'], {
+    encoding: 'buffer',
+    timeout: 5000,
+    maxBuffer: 50 * 1024 * 1024 // 50MB max
+  })
+  if (imageData.status !== 0 || !imageData.stdout) return null
+  return imageData.stdout.length > 0 ? imageData.stdout : null
 }
 
 function getMacScreenshotDir(): string {
-  try {
-    const loc = execSync('defaults read com.apple.screencapture location 2>/dev/null', {
-      encoding: 'utf8',
-      timeout: 2000
-    }).trim()
+  const result = spawnSync('defaults', ['read', 'com.apple.screencapture', 'location'], {
+    encoding: 'utf8',
+    timeout: 2000
+  })
+  if (result.status === 0 && result.stdout) {
+    const loc = result.stdout.trim()
     if (loc) return loc
-  } catch {
-    // defaults command failed — key not set
   }
+  // The 'defaults read' exits non-zero when the key is unset — fall back
+  // to the OS default.
   return path.join(os.homedir(), 'Desktop')
 }
 
 async function getClipboardImageMac(): Promise<Buffer | null> {
-  try {
-    const imageData = execSync('pngpaste - 2>/dev/null', {
-      encoding: 'buffer',
-      timeout: 5000,
-      maxBuffer: 50 * 1024 * 1024 // 50MB max
-    })
-    return imageData.length > 0 ? imageData : null
-  } catch {
-    // pngpaste exits non-zero if no image on clipboard
-    return null
-  }
+  // pngpaste writes the clipboard PNG to stdout; with `-` it writes raw bytes
+  // (no trailing newline). Exits non-zero if the clipboard has no image.
+  const result = spawnSync('pngpaste', ['-'], {
+    encoding: 'buffer',
+    timeout: 5000,
+    maxBuffer: 50 * 1024 * 1024 // 50MB max
+  })
+  if (result.status !== 0 || !result.stdout) return null
+  return result.stdout.length > 0 ? result.stdout : null
 }
 
 // macOS screenshot filenames are localized. The English default is

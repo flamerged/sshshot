@@ -3,8 +3,8 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
-import { spawn, execSync } from 'child_process'
-import { Config, loadConfig, saveConfig, detectSSHRemotes } from './config'
+import { spawn, spawnSync, execSync } from 'child_process'
+import { Config, getPidFile, loadConfig, saveConfig, detectSSHRemotes } from './config'
 import { promptConfirm, promptSelect, promptInput, promptMultiSelect } from './prompts'
 import { startMonitor } from './monitor'
 
@@ -13,10 +13,6 @@ const isWindows = process.platform === 'win32'
 interface ProcessInfo {
   pid: number
   command: string
-}
-
-function getPidFile(): string {
-  return path.join(os.homedir(), '.config', 'sshshot', 'sshshot.pid')
 }
 
 // Returns true if a process with the given pid is alive on the current host.
@@ -90,7 +86,9 @@ function findSshshotProcesses(): ProcessInfo[] {
 function killProcess(pid: number, force = false): void {
   try {
     if (isWindows) {
-      execSync(`taskkill /PID ${pid}${force ? ' /F' : ''}`, { stdio: 'pipe', windowsHide: true })
+      const args = ['/PID', String(pid)]
+      if (force) args.push('/F')
+      spawnSync('taskkill', args, { stdio: 'pipe', windowsHide: true })
     } else {
       process.kill(pid, force ? 'SIGKILL' : 'SIGTERM')
     }
@@ -171,16 +169,28 @@ function startBackground(remote: string): void {
     child.unref()
     console.log(`Started in background (PID: ${child.pid})`)
   } else {
-    // Linux/macOS: use nohup + shell backgrounding to preserve X11/Wayland access
-    // The native clipboard library crashes with Node's detached mode
+    // Linux/macOS: spawn detached, redirect stdio to a log file. Previously
+    // this used `nohup '...' & echo $!` via execSync — a shell command
+    // string with `${remote}` interpolation, which would break or inject
+    // if remote contained shell metacharacters. spawn() with array args
+    // closes that surface entirely.
+    //
+    // The earlier comment claimed Node's detached mode crashed the native
+    // clipboard library; that library (@crosscopy/clipboard) was removed
+    // along with shell-history scanning, so detached spawn is now safe.
+    // All clipboard access goes through fresh xclip/wl-copy/pbcopy
+    // processes that the daemon spawns per poll.
     const logDir = path.join(os.homedir(), '.config', 'sshshot', 'logs')
     fs.mkdirSync(logDir, { recursive: true })
-    const cmd = `nohup "${process.execPath}" "${__filename}" --daemon "${remote}" >> "${logDir}/daemon.log" 2>&1 & echo $!`
-    const result = execSync(cmd, {
-      encoding: 'utf8',
+    const logFd = fs.openSync(path.join(logDir, 'daemon.log'), 'a')
+    child = spawn(process.execPath, [__filename, '--daemon', remote], {
+      detached: true,
+      stdio: ['ignore', logFd, logFd],
       env: { ...process.env, SHOTMON_BACKGROUND: '1' }
-    }).trim()
-    console.log(`Started in background (PID: ${result})`)
+    })
+    child.unref()
+    fs.closeSync(logFd)
+    console.log(`Started in background (PID: ${child.pid})`)
   }
 
   console.log(`Logs: ~/.config/sshshot/logs/`)
