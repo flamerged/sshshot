@@ -652,11 +652,34 @@ async function copyToClipboard(text: string): Promise<boolean> {
   return copyToClipboardX11(text)
 }
 
+// Module-level pause-state tracker so we log the transition once instead
+// of on every paused screenshot. Updated by checkPaused() at the top of
+// processNewImage. Initialized to false; the first paused poll logs
+// "Paused — skipping…".
+let lastSeenPausedState = false
+
+function checkPaused(): boolean {
+  const paused = Boolean(loadConfig()?.paused)
+  if (paused !== lastSeenPausedState) {
+    log(
+      paused
+        ? 'Paused — clipboard untouched until resume'
+        : 'Resumed — processing screenshots again'
+    )
+    lastSeenPausedState = paused
+  }
+  return paused
+}
+
 async function processNewImage(
   imageBuffer: Buffer,
   remote: string,
   source: 'clipboard' | 'file'
 ): Promise<void> {
+  // Honor `sshshot pause` — daemon stays alive but skips processing so
+  // the user can take non-AI screenshots without `stop`/`start`+re-select.
+  if (checkPaused()) return
+
   const filename = generateFilename()
   const size = Math.round(imageBuffer.length / 1024)
 

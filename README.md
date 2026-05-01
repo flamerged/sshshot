@@ -110,9 +110,26 @@ sshshot stop             stop the running daemon
 sshshot status           show running PID + target remote
 sshshot target           show current active target + available targets
 sshshot target <name>    switch active target without restarting the daemon
+sshshot pause            keep daemon alive but stop touching the clipboard
+sshshot resume           resume processing screenshots
+sshshot toggle           flip pause/resume in one command
 sshshot config           add/remove SSH remotes
 sshshot uninstall        stop daemon + remove ~/.config/sshshot
 ```
+
+### Pausing without losing your target
+
+When you want to take a screenshot for Slack/GitHub/iMessage and don't want sshshot replacing your clipboard with the remote path, **don't stop the daemon** — pause it:
+
+```bash
+sshshot pause     # daemon stays alive, target stays selected, clipboard untouched
+# … take your local screenshot, paste it wherever …
+sshshot resume    # back to processing screenshots into the remote
+# or:
+sshshot toggle    # flips between the two
+```
+
+`sshshot status` shows `[paused]` next to the running PID so you know which mode you're in. This is intentionally lighter than `stop`/`start` — no process restart, no re-prompting for which remote, instant flip.
 
 ### Switching targets at runtime
 
