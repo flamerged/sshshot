@@ -213,7 +213,7 @@ function uninstall(): void {
     console.log(`Removed ${configDir}`)
   }
 
-  console.log('\nNow run: npm uninstall -g sshshot')
+  console.log('\nNow run: npm uninstall -g @flamerged/sshshot')
 }
 
 function stopBackground(): void {

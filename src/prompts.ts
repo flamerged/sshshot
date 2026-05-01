@@ -5,9 +5,14 @@ import enquirer from 'enquirer'
 // is ESM-clean without needing require() / @ts-ignore.
 const { Select, Confirm, Input, MultiSelect } = enquirer as any
 
-// Suppress enquirer's readline error on Ctrl+C (Node.js 24+ issue)
+// Suppress enquirer's readline error on Ctrl+C (Node.js 24+ issue).
+// Scoped tighter than before by also requiring the error to originate from
+// enquirer's call site, so an unrelated bug elsewhere in the process that
+// happened to include "readline was closed" in its message wouldn't be
+// silently swallowed.
 process.on('uncaughtException', (err) => {
-  if (err.message?.includes('readline was closed')) {
+  const fromEnquirer = err.stack?.includes('enquirer') === true
+  if (fromEnquirer && err.message?.includes('readline was closed')) {
     console.log('\nCancelled')
     process.exit(0)
   }

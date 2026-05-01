@@ -6,7 +6,8 @@ import * as os from 'os'
 import { loadConfig } from './config'
 
 const POLL_INTERVAL_MS = 200
-const LOG_MAX_AGE_MS = 60 * 60 * 1000 // 1 hour
+const LOG_MAX_AGE_MS = 60 * 60 * 1000 // 1 hour — rotate to a new file
+const LOG_RETENTION_MS = 7 * 24 * 60 * 60 * 1000 // 7 days — prune older files
 
 // Track hashes per source so the clipboard and file watchers don't collide.
 // Without this, processing a file screenshot (B) makes the next clipboard poll
@@ -43,8 +44,33 @@ function ensureLogDir(): void {
   }
 }
 
+// Best-effort cleanup of log files older than LOG_RETENTION_MS. Called on
+// every log rotation so the directory doesn't grow unbounded over months.
+function pruneOldLogs(): void {
+  const logDir = getLogDir()
+  if (!fs.existsSync(logDir)) return
+  const cutoff = Date.now() - LOG_RETENTION_MS
+  try {
+    for (const f of fs.readdirSync(logDir)) {
+      if (!f.startsWith('sshshot-') || !f.endsWith('.log')) continue
+      const filePath = path.join(logDir, f)
+      try {
+        const stat = fs.statSync(filePath)
+        if (stat.mtimeMs < cutoff) {
+          fs.unlinkSync(filePath)
+        }
+      } catch {
+        // file disappeared between readdir and stat; ignore
+      }
+    }
+  } catch {
+    // log dir disappeared; ignore
+  }
+}
+
 function createNewLogFile(): string {
   ensureLogDir()
+  pruneOldLogs()
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
   const filename = `sshshot-${timestamp}.log`
   return path.join(getLogDir(), filename)
@@ -462,6 +488,19 @@ export async function startMonitor(initialRemote: string): Promise<void> {
       // Directory might not exist
     }
     log(`Watching screenshot dir: ${screenshotDir}`)
+  }
+
+  // Linux X11 prerequisites — mirror the macOS pngpaste warning so users
+  // get a visible signal when clipboard reads silently fail.
+  if (!isWindows && !wsl && !isMac) {
+    const xclipCheck = spawnSync('which', ['xclip'], { encoding: 'utf8', timeout: 2000 })
+    if (xclipCheck.status !== 0) {
+      log('Warning: xclip not found. Install with one of:')
+      log('  Debian/Ubuntu:  sudo apt install xclip')
+      log('  Fedora:         sudo dnf install xclip')
+      log('  Arch:           sudo pacman -S xclip')
+      log('  Clipboard detection will silently fail until xclip is installed.')
+    }
   }
 
   log('')
