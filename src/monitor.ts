@@ -269,13 +269,17 @@ async function getClipboardImageMac(): Promise<Buffer | null> {
 // macOS screenshot filenames are localized. The English default is
 // "Screenshot YYYY-MM-DD at ...png" but other system languages use
 // completely different prefixes. The user can also override the prefix via
-// `defaults write com.apple.screencapture name <Custom>`. We match the known
-// stock prefixes for major locales and accept any user-defined prefix that
-// looks like a screenshot (single word + space + date-shaped content).
-const MAC_SCREENSHOT_FILENAME_RE =
-  /^(Screenshot|Bildschirm(foto|aufnahme)|Capture (d'écran|d'ecran)|Captura (de pantalla|de tela)|Schermata|Schermafbeelding|Skärmavbild|Skjermbilde|Skærmbillede|スクリーンショット|スクリーンキャプチャ|화면 캡처|Снимок экрана|Capture)\b.*\.png$/i
+// `defaults write com.apple.screencapture name <Custom>`.
+//
+// We match the known stock prefixes for major locales. The (?=\s|\.|$)
+// lookahead replaces a JS \b word boundary because \b is ASCII-only —
+// after CJK characters (e.g. スクリーンショット), \b fails since JS sees
+// the prior character class as 'non-word'. Lookahead-on-separator is
+// locale-independent and behaves identically for all alphabets.
+export const MAC_SCREENSHOT_FILENAME_RE =
+  /^(Screenshot|Bildschirm(foto|aufnahme)|Capture (d'écran|d'ecran)|Captura (de pantalla|de tela)|Schermata|Schermafbeelding|Skärmavbild|Skjermbilde|Skærmbillede|スクリーンショット|スクリーンキャプチャ|화면 캡처|Снимок экрана|Capture)(?=\s|\.|$).*\.png$/i
 
-function isMacScreenshotFilename(filename: string): boolean {
+export function isMacScreenshotFilename(filename: string): boolean {
   return MAC_SCREENSHOT_FILENAME_RE.test(filename)
 }
 
@@ -340,11 +344,11 @@ async function getClipboardImage(): Promise<Buffer | null> {
   return getClipboardImageNative()
 }
 
-function getImageHash(buffer: Buffer): string {
+export function getImageHash(buffer: Buffer): string {
   return crypto.createHash('md5').update(buffer).digest('hex')
 }
 
-function generateFilename(): string {
+export function generateFilename(): string {
   const now = new Date()
   const timestamp = now.toISOString().replace(/[:.]/g, '-').slice(0, 19)
   return `screenshot-${timestamp}.png`
@@ -354,7 +358,7 @@ function generateFilename(): string {
 // command. generateFilename() only produces strings matching this regex
 // today, but if generation ever changes (e.g. accepts user input), this
 // guard keeps the shell-injection surface closed.
-const SAFE_REMOTE_FILENAME_RE = /^screenshot-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}\.png$/
+export const SAFE_REMOTE_FILENAME_RE = /^screenshot-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}\.png$/
 
 function getLocalScreenshotDir(): string {
   return path.join(os.homedir(), 'sshshot-screenshots')
