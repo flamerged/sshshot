@@ -1,22 +1,30 @@
 name: release
 
-# Auto-publishes via semantic-release on every push to master.
-# - `fix:` / `perf:` commits trigger a patch release.
-# - `feat:` commits trigger a minor release.
-# - Breaking changes are explicitly NOT auto-released — major versions are
-#   intentionally tagged manually (`npm version major && git push --tags`),
-#   which kicks the existing publish.yml.
+# Single workflow handling BOTH release paths so only one Trusted Publisher
+# rule is needed on npm (the @flamerged/sshshot package's trust rule must
+# point at this file: 'release.yml').
 #
-# Architecture note: @semantic-release/npm requires an NPM_TOKEN even with
-# `provenance: true` (provenance signs on top of token auth, doesn't replace
-# it). To stay token-less and use Trusted Publishing via OIDC, we run sr with
-# `npmPublish: false` (so it only does versioning + tag + GitHub release +
-# changelog) and run `npm publish --provenance --access public` ourselves
-# afterward, conditional on a new tag being created.
+# - Push to master  -> semantic-release auto-flow:
+#     * fix: / perf:  -> patch release (e.g. 0.3.0 -> 0.3.1)
+#     * feat:         -> minor release (e.g. 0.3.0 -> 0.4.0)
+#     * BREAKING      -> NOT auto-released (sr's release rule blocks it)
+#   sr writes the version into package.json in CI (not committed back —
+#   master is branch-protected), creates the GitHub Release + tag via API,
+#   then a final step does `npm publish --provenance` via OIDC.
+#
+# - Push of a v* tag -> manual major flow:
+#     User locally:
+#       npm version major   # 0.x.y -> 1.0.0; commits + tags
+#       git push --tags     # pushes the tag (the bump commit can fail
+#                           #  branch protection — that's OK, the tag is
+#                           #  what matters for publish; rebase later)
+#   The tag push enters this workflow on the tag ref, the version-matches-
+#   tag check passes, npm publish runs the same way.
 
 on:
   push:
     branches: [master]
+    tags: ['v*']
   workflow_dispatch:
 
 jobs:
@@ -47,27 +55,47 @@ jobs:
       - name: Build
         run: yarn build
 
-      - name: Capture current tag
+      # ===== Master-push path: semantic-release auto-release =====
+
+      - name: Capture current tag (sr-release diff)
+        if: github.ref == 'refs/heads/master'
         id: tag_before
         run: echo "tag=$(git describe --tags --abbrev=0 2>/dev/null || echo none)" >> "$GITHUB_OUTPUT"
 
-      - name: Run semantic-release (versioning, tag, GH release; no npm publish)
+      - name: Run semantic-release
+        if: github.ref == 'refs/heads/master'
         run: yarn semantic-release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Detect whether a new release was cut
-        id: tag_after
+      - name: Detect new tag from sr
+        if: github.ref == 'refs/heads/master'
+        id: sr_tag_detect
         run: |
           after=$(git describe --tags --abbrev=0 2>/dev/null || echo none)
           before="${{ steps.tag_before.outputs.tag }}"
           if [ "$after" != "$before" ]; then
             echo "new=true" >> "$GITHUB_OUTPUT"
-            echo "tag=$after" >> "$GITHUB_OUTPUT"
           else
             echo "new=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Publish to npm via OIDC
-        if: steps.tag_after.outputs.new == 'true'
+      - name: Publish to npm via OIDC (sr-driven)
+        if: github.ref == 'refs/heads/master' && steps.sr_tag_detect.outputs.new == 'true'
+        run: npm publish --provenance --access public
+
+      # ===== Tag-push path: manual major release =====
+
+      - name: Verify tag matches package.json version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          tag="${GITHUB_REF##*/}"
+          ver="v$(node -p "require('./package.json').version")"
+          if [ "$tag" != "$ver" ]; then
+            echo "::error::Tag $tag does not match package.json version $ver"
+            exit 1
+          fi
+
+      - name: Publish to npm via OIDC (manual tag-driven)
+        if: startsWith(github.ref, 'refs/tags/v')
         run: npm publish --provenance --access public
