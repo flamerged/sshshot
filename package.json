@@ -17,6 +17,8 @@
     "dev": "tsc && node dist/index.js",
     "format": "prettier --write \"src/**/*.{ts,json}\" \"*.{json,md,yml,yaml}\"",
     "format:check": "prettier --check \"src/**/*.{ts,json}\" \"*.{json,md,yml,yaml}\"",
+    "lint": "eslint \"src/**/*.ts\"",
+    "lint:fix": "eslint --fix \"src/**/*.ts\"",
     "prepare": "husky",
     "prepublishOnly": "npm run build"
   },
@@ -52,6 +54,9 @@
   },
   "devDependencies": {
     "@types/node": "^25.0.10",
+    "@typescript-eslint/eslint-plugin": "^8.33.1",
+    "@typescript-eslint/parser": "^8.33.1",
+    "eslint": "^9.36.0",
     "husky": "^9.1.7",
     "lint-staged": "^15.5.2",
     "prettier": "^3.4.2",
