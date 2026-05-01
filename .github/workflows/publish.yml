@@ -20,7 +20,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'
           cache: 'yarn'
           registry-url: 'https://registry.npmjs.org'
 
@@ -38,14 +38,6 @@ jobs:
             echo "::error::Tag $tag does not match package.json version $ver"
             exit 1
           fi
-
-      # Trusted Publishing requires npm CLI >= 11.5.1 for the OIDC handshake.
-      # Node 20's bundled npm is 10.8.2; without this upgrade the publish PUT
-      # returns a misleading 'E404 Not Found' AFTER Sigstore successfully signs
-      # the provenance statement. See npm/cli#9088 and community discussion
-      # #173102 for context.
-      - name: Upgrade npm CLI for OIDC support
-        run: npm install -g npm@latest
 
       - name: Publish to npm (Trusted Publishing via OIDC)
         run: npm publish --provenance --access public
