@@ -7,7 +7,11 @@ import * as os from "os";
 const POLL_INTERVAL_MS = 200;
 const LOG_MAX_AGE_MS = 60 * 60 * 1000; // 1 hour
 
-let lastImageHash: string | null = null;
+// Track hashes per source so the clipboard and file watchers don't collide.
+// Without this, processing a file screenshot (B) makes the next clipboard poll
+// think the still-present clipboard image (A) is new — re-uploading it.
+let lastClipboardHash: string | null = null;
+let lastFileHash: string | null = null;
 let logFile: string | null = null;
 let logStartTime: number = 0;
 let lastSeenScreenshotMtime: number = 0;
@@ -426,7 +430,7 @@ export async function startMonitor(remote: string): Promise<void> {
   // Initialize with current clipboard state
   const initialImage = await getClipboardImage();
   if (initialImage) {
-    lastImageHash = getImageHash(initialImage);
+    lastClipboardHash = getImageHash(initialImage);
   }
 
   const poll = async () => {
@@ -436,8 +440,8 @@ export async function startMonitor(remote: string): Promise<void> {
 
       if (imageBuffer) {
         const currentHash = getImageHash(imageBuffer);
-        if (currentHash !== lastImageHash) {
-          lastImageHash = currentHash;
+        if (currentHash !== lastClipboardHash) {
+          lastClipboardHash = currentHash;
           await processNewImage(imageBuffer, remote, "clipboard");
         }
       }
@@ -447,8 +451,8 @@ export async function startMonitor(remote: string): Promise<void> {
         const fileBuffer = getLatestMacScreenshot();
         if (fileBuffer) {
           const fileHash = getImageHash(fileBuffer);
-          if (fileHash !== lastImageHash) {
-            lastImageHash = fileHash;
+          if (fileHash !== lastFileHash) {
+            lastFileHash = fileHash;
             await processNewImage(fileBuffer, remote, "file");
           }
         }
