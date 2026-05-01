@@ -90,37 +90,52 @@ export function saveConfig(config: Config): void {
 
 // Pure parser, exported for tests. Takes the raw text of an ssh_config and
 // returns the Host blocks (excluding wildcard patterns).
+//
+// `Host a b c` declares three aliases sharing the same block — we emit one
+// SSHHost per alias so all of them show up in the auto-detect picker. The
+// previous parser dropped b and c entirely, so users with shorthand aliases
+// like `Host prod-1 prod` had to type the long form by hand.
 export function parseSSHConfig(content: string): SSHHost[] {
   const lines = content.split('\n')
   const hosts: SSHHost[] = []
-  let currentHost: SSHHost | null = null
+  // currentBlock is a list of host objects sharing one Host directive — all
+  // are mutated together when we see HostName / User children.
+  let currentBlock: SSHHost[] | null = null
+
+  const flush = () => {
+    if (currentBlock) {
+      hosts.push(...currentBlock)
+      currentBlock = null
+    }
+  }
 
   for (const line of lines) {
     const trimmed = line.trim()
     if (trimmed.toLowerCase().startsWith('host ')) {
-      if (currentHost) {
-        hosts.push(currentHost)
+      flush()
+      // Split on whitespace, drop wildcard patterns. A line like
+      // `Host * !bad ok` would yield a block with just { name: 'ok' } —
+      // we accept the non-wildcard aliases and ignore the rest.
+      const aliases = trimmed
+        .slice(5)
+        .trim()
+        .split(/\s+/)
+        .filter((n) => n.length > 0 && !n.includes('*') && !n.startsWith('!'))
+      if (aliases.length > 0) {
+        currentBlock = aliases.map((name) => ({ name }))
       }
-      const hostName = trimmed.slice(5).trim().split(/\s+/)[0]
-      // Skip wildcard patterns
-      if (!hostName.includes('*')) {
-        currentHost = { name: hostName }
-      } else {
-        currentHost = null
-      }
-    } else if (currentHost) {
+    } else if (currentBlock) {
       if (trimmed.toLowerCase().startsWith('hostname ')) {
-        currentHost.hostname = trimmed.slice(9).trim()
+        const hostname = trimmed.slice(9).trim()
+        for (const h of currentBlock) h.hostname = hostname
       } else if (trimmed.toLowerCase().startsWith('user ')) {
-        currentHost.user = trimmed.slice(5).trim()
+        const user = trimmed.slice(5).trim()
+        for (const h of currentBlock) h.user = user
       }
     }
   }
 
-  if (currentHost) {
-    hosts.push(currentHost)
-  }
-
+  flush()
   return hosts
 }
 

@@ -56,12 +56,26 @@ Host real-host
     expect(parseSSHConfig(input)).toEqual([{ name: 'my-host', hostname: '1.2.3.4', user: 'root' }])
   })
 
-  it('takes the FIRST name when a Host line lists multiple aliases', () => {
+  it('expands multi-alias Host lines into one SSHHost per alias', () => {
     const input = `Host primary alias-1 alias-2
   HostName 1.2.3.4
+  User shared
 `
-    // We only return the first name; aliases are a feature we don't expose
-    expect(parseSSHConfig(input)).toEqual([{ name: 'primary', hostname: '1.2.3.4' }])
+    // All aliases share the same hostname/user — each becomes selectable.
+    expect(parseSSHConfig(input)).toEqual([
+      { name: 'primary', hostname: '1.2.3.4', user: 'shared' },
+      { name: 'alias-1', hostname: '1.2.3.4', user: 'shared' },
+      { name: 'alias-2', hostname: '1.2.3.4', user: 'shared' }
+    ])
+  })
+
+  it('drops wildcard / negation entries from a mixed Host line', () => {
+    const input = `Host * !forbidden real
+  User shared
+`
+    // The block is kept (the 'real' alias is non-wildcard); '*' and '!forbidden'
+    // are filtered out.
+    expect(parseSSHConfig(input)).toEqual([{ name: 'real', user: 'shared' }])
   })
 
   it('ignores unrelated directives', () => {
