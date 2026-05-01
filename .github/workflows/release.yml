@@ -57,10 +57,10 @@ jobs:
 
       # ===== Master-push path: semantic-release auto-release =====
 
-      - name: Capture current tag (sr-release diff)
+      - name: Capture package.json version before sr
         if: github.ref == 'refs/heads/master'
-        id: tag_before
-        run: echo "tag=$(git describe --tags --abbrev=0 2>/dev/null || echo none)" >> "$GITHUB_OUTPUT"
+        id: ver_before
+        run: echo "version=$(node -p 'require(\"./package.json\").version')" >> "$GITHUB_OUTPUT"
 
       - name: Run semantic-release
         if: github.ref == 'refs/heads/master'
@@ -68,20 +68,27 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Detect new tag from sr
+      # sr's @semantic-release/github plugin creates the tag via the GitHub
+      # API, NOT a local git push, so 'git describe' on the runner doesn't
+      # see the new tag. Comparing package.json version before/after is the
+      # reliable detection: sr's @semantic-release/npm step always rewrites
+      # the version field in the workspace, regardless of npmPublish setting.
+      - name: Detect whether sr cut a release
         if: github.ref == 'refs/heads/master'
-        id: sr_tag_detect
+        id: sr_release_detect
         run: |
-          after=$(git describe --tags --abbrev=0 2>/dev/null || echo none)
-          before="${{ steps.tag_before.outputs.tag }}"
+          after=$(node -p 'require("./package.json").version')
+          before="${{ steps.ver_before.outputs.version }}"
           if [ "$after" != "$before" ]; then
             echo "new=true" >> "$GITHUB_OUTPUT"
+            echo "Released $before -> $after"
           else
             echo "new=false" >> "$GITHUB_OUTPUT"
+            echo "No release this run (no qualifying commits since last tag)"
           fi
 
       - name: Publish to npm via OIDC (sr-driven)
-        if: github.ref == 'refs/heads/master' && steps.sr_tag_detect.outputs.new == 'true'
+        if: github.ref == 'refs/heads/master' && steps.sr_release_detect.outputs.new == 'true'
         run: npm publish --provenance --access public
 
       # ===== Tag-push path: manual major release =====
