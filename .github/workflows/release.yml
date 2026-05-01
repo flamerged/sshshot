@@ -55,6 +55,23 @@ jobs:
       - name: Build
         run: yarn build
 
+      # Gate publishing on the same checks ci.yml runs. Catches the case where
+      # a master push slipped past PR review (admin direct push), or a flaky
+      # CI run was retried and merged before the retry finished. Each step
+      # below is the same command the matrix runs, just inline so the publish
+      # steps below can't fire if any of them fail.
+      - name: Typecheck (release gate)
+        run: yarn typecheck
+
+      - name: Lint (release gate)
+        run: yarn lint
+
+      - name: Format check (release gate)
+        run: yarn format:check
+
+      - name: Test (release gate)
+        run: yarn test
+
       # ===== Master-push path: semantic-release auto-release =====
 
       - name: Capture package.json version before sr

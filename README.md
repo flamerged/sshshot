@@ -14,7 +14,7 @@ npm install -g @flamerged/sshshot
 
 > Fork of [HendrikYtt/clipshot](https://github.com/HendrikYtt/clipshot) with macOS support added (cherry-picked from upstream PR #1, with both Codex-flagged P1 bugs fixed) and modern dev tooling (Yarn 4, ESLint 9, Husky, lint-staged, branch protection). Original credit and license preserved.
 
-![Demo on Windows / PowerShell](demo-windows.gif)
+![Demo on Windows / PowerShell](https://raw.githubusercontent.com/flamerged/sshshot/master/demo-windows.gif)
 _Upstream demo on Windows. macOS and Linux X11 demos are on the [Roadmap](#roadmap)._
 
 ## The problem
@@ -132,7 +132,7 @@ Logs land in `~/.config/sshshot/logs/sshshot-<timestamp>.log` (rotated hourly).
 ## How it works (technical)
 
 - TypeScript CLI. Single binary entry (`dist/index.js`) that double-purposes as both the foreground configurator and the daemon (when invoked with `--daemon <remote>`).
-- Background daemon spawned via `nohup` (Unix) or `spawn(..., {detached: true})` (Windows) so closing your terminal doesn't kill it.
+- Background daemon spawned with `spawn(..., {detached: true})` (no shell, no `nohup`) so closing your terminal doesn't kill it.
 - 200 ms poll loop reads the clipboard and (on macOS) the screenshot folder, MD5-hashes new bytes, dedupes per source, then uploads.
 - Upload mechanic: `ssh <remote> 'mkdir -p ~/sshshot-screenshots && cat > ~/sshshot-screenshots/<filename>'` with the image piped to stdin. No temp files, no `scp`.
 - All OS-specific work is shell-outs (`xclip`, `pbcopy` / `pngpaste`, PowerShell `Clipboard.GetImage()`). No native modules, no Electron, no large runtime cost — the daemon idles around 30–80 MB resident.
