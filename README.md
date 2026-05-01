@@ -176,6 +176,14 @@ You'd still need a server to receive uploads, and AI agents running over SSH don
 
 ## Roadmap
 
+- [ ] **Context-aware clipboard routing** (macOS first) — replace clipboard with the remote path only when the foreground app is a terminal-ish thing (Terminal/iTerm2/Warp/Ghostty/Zed/VS Code/etc.). For Slack/GitHub/iMessage screenshots the image bytes stay on the clipboard. `pause`/`resume` is the short-term workaround.
+- [ ] Retry on SSH failure with exponential backoff — currently a failed upload silently drops the screenshot
+- [ ] System notification on upload success / failure (`osascript -e 'display notification'` on macOS, `notify-send` on Linux) so the daemon's status is visible without tailing logs
+- [ ] `sshshot last` / `sshshot history` — show the most recent N uploads with timestamps + remote paths
+- [ ] `sshshot open` — open the most recent screenshot in the system image viewer
+- [ ] Optional `pngquant` / `optipng` compression passthrough before upload — 80–90 % size reduction for similar visual quality, big win on slow links
+- [ ] Configurable remote upload directory (currently hardcoded to `~/sshshot-screenshots/`); same for the `local` mode directory
+- [ ] mtime-vs-daemon-start gate so a Screenshot-named file copied into the watch dir (restored from backup, `cp`'d in, etc.) isn't mistakenly uploaded as a fresh screenshot
 - [ ] Record macOS demo gif (current `demo-windows.gif` is the upstream Windows/PowerShell flow)
 - [ ] Record Linux X11 / Wayland demo gif
 - [ ] Optional inline image paste (instead of path) for tools that accept multipart pastes — future ergonomic win
