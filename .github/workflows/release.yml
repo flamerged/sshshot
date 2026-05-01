@@ -6,6 +6,13 @@ name: release
 # - Breaking changes are explicitly NOT auto-released — major versions are
 #   intentionally tagged manually (`npm version major && git push --tags`),
 #   which kicks the existing publish.yml.
+#
+# Architecture note: @semantic-release/npm requires an NPM_TOKEN even with
+# `provenance: true` (provenance signs on top of token auth, doesn't replace
+# it). To stay token-less and use Trusted Publishing via OIDC, we run sr with
+# `npmPublish: false` (so it only does versioning + tag + GitHub release +
+# changelog) and run `npm publish --provenance --access public` ourselves
+# afterward, conditional on a new tag being created.
 
 on:
   push:
@@ -23,12 +30,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # Full history so semantic-release can read past commits/tags
           fetch-depth: 0
-          # Keep the auth token wired up so semantic-release-github and the
-          # git plugin can push the version-bump commit + create the GH
-          # release. The release commit carries `[skip ci]` so CI doesn't
-          # re-loop on it.
 
       - name: Enable corepack
         run: corepack enable
@@ -45,7 +47,27 @@ jobs:
       - name: Build
         run: yarn build
 
-      - name: Release
+      - name: Capture current tag
+        id: tag_before
+        run: echo "tag=$(git describe --tags --abbrev=0 2>/dev/null || echo none)" >> "$GITHUB_OUTPUT"
+
+      - name: Run semantic-release (versioning, tag, GH release; no npm publish)
         run: yarn semantic-release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Detect whether a new release was cut
+        id: tag_after
+        run: |
+          after=$(git describe --tags --abbrev=0 2>/dev/null || echo none)
+          before="${{ steps.tag_before.outputs.tag }}"
+          if [ "$after" != "$before" ]; then
+            echo "new=true" >> "$GITHUB_OUTPUT"
+            echo "tag=$after" >> "$GITHUB_OUTPUT"
+          else
+            echo "new=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish to npm via OIDC
+        if: steps.tag_after.outputs.new == 'true'
+        run: npm publish --provenance --access public
