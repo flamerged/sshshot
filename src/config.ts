@@ -16,19 +16,27 @@ export interface Config {
   activeTarget?: string
 }
 
-// Reject remote names that ssh would interpret as option flags. A user-typed
-// `-oProxyCommand=…` slipping through to `spawn('ssh', [name, …])` would let
-// ssh take that arg as flags and execute the embedded command. The spawn
-// sites also use a `--` separator now, but rejecting at input gives a clear
-// error and stops typos like `-myhost` from creating a non-functional entry.
+// Allowed character set for remote names: alphanumerics plus `.`, `_`, `-`,
+// `@`. The leading character must NOT be `-` so ssh can't take it as an
+// option flag (`-oProxyCommand=…`) — even with the `--` spawn-separator
+// in monitor.ts, rejecting at config-input time gives a clear UI error
+// instead of an unparseable saved entry. Covers everything ssh accepts as
+// a hostname or user@host expression (including IPv4 dotted-quads and
+// config-file aliases like `prod-1`). An IPv6 literal in user@host form
+// would need brackets — not currently supported by the picker; users with
+// v6-only hosts can put them in `~/.ssh/config` under a name and
+// reference the alias.
+//
+// The whitelist is stricter than necessary because no current code path
+// interpolates a `remote` value into a remote shell string — pipeToRemote
+// and getHomeDir pass it as a positional spawn arg with `--` separator.
+// But a future refactor that builds an ssh-side command from `remote`
+// (e.g. a `sshshot logs <remote>` feature) would inherit the whitelist
+// as defense in depth. Cheaper to enforce now than to remember later.
+const VALID_REMOTE_NAME_RE = /^[A-Za-z0-9._@][A-Za-z0-9._@-]*$/
+
 export function isValidRemoteName(name: string): boolean {
-  if (name.length === 0) return false
-  if (name.startsWith('-')) return false
-  // No whitespace. Internal hyphens are fine — hostnames like prod-1, db-2
-  // are common. The interactive prompt that feeds this is single-line, so
-  // control-character checks are not needed here.
-  if (/\s/.test(name)) return false
-  return true
+  return VALID_REMOTE_NAME_RE.test(name)
 }
 
 export function getConfigDir(): string {
@@ -161,6 +169,14 @@ export function parseSSHConfig(content: string, loader?: SSHConfigIncludeLoader)
   return parseSSHConfigInner(content, loader ?? (() => []), 0)
 }
 
+// OpenSSH treats `#` as starting a line comment iff preceded by whitespace
+// OR at start of line. A `#` inside a token (e.g. a hostname `prod#qa`)
+// is part of the value, not a comment. Strip from there to end-of-line.
+// Exported so tests can pin the exact tokenizer behavior.
+export function stripSshConfigComment(line: string): string {
+  return line.replace(/(^|\s)#.*$/, '$1').trimEnd()
+}
+
 function parseSSHConfigInner(
   content: string,
   loader: SSHConfigIncludeLoader,
@@ -168,7 +184,7 @@ function parseSSHConfigInner(
 ): SSHHost[] {
   if (depth > MAX_INCLUDE_DEPTH) return []
 
-  const lines = content.split('\n')
+  const lines = content.split('\n').map(stripSshConfigComment)
   const hosts: SSHHost[] = []
   // currentBlock is a list of host objects sharing one Host directive — all
   // are mutated together when we see HostName / User children. Match blocks
