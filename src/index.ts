@@ -166,6 +166,8 @@ Commands:
   target [<name>]   Show or change the active target without restarting the daemon
   config            Modify configuration
   uninstall         Remove config and stop process
+  version           Print version and exit
+  help              Show this help
 
 Run without command to setup/configure.
 `)
@@ -322,6 +324,14 @@ async function main(): Promise<void> {
     if (remote) {
       await startMonitor(remote)
     }
+    return
+  }
+
+  // `--version` / `-v` / `version` print the bare version and exit, like
+  // most CLIs. Done before the banner so scripts piping `sshshot --version`
+  // get a clean version string.
+  if (command === 'version' || command === '--version' || command === '-v') {
+    console.log(getVersion())
     return
   }
 

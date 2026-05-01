@@ -1,0 +1,19 @@
+branch=$(git rev-parse --abbrev-ref HEAD)
+allowed_re='^(master|(feat|fix|chore|docs|refactor|perf|test|ci|build|style|revert)/.+)$'
+
+if ! printf '%s' "$branch" | grep -qE "$allowed_re"; then
+  echo "❌  Branch name '$branch' is not allowed."
+  echo ""
+  echo "Allowed:"
+  echo "    master                  (admin direct pushes)"
+  echo "    feat/<short-desc>       new feature → minor release"
+  echo "    fix/<short-desc>        bug fix     → patch release"
+  echo "    perf/<short-desc>       performance → patch release"
+  echo "    chore/<short-desc>      tooling, deps, no release"
+  echo "    docs/<short-desc>       docs only,  no release"
+  echo "    refactor/<short-desc>   no behaviour change, no release"
+  echo "    test/, ci/, build/, style/, revert/  also accepted (no release)"
+  echo ""
+  echo "Rename:  git branch -m <new-name>"
+  exit 1
+fi

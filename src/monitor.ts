@@ -355,31 +355,26 @@ async function pipeToRemote(
 }
 
 function copyToClipboardWindows(text: string): void {
-  try {
-    if (isWindows) {
-      // On native Windows, use PowerShell's Set-Clipboard
-      const escaped = text.replace(/'/g, "''")
-      execSync(
-        `powershell -NoProfile -WindowStyle Hidden -Command "Set-Clipboard -Value '${escaped}'"`,
-        { timeout: 2000, windowsHide: true }
-      )
-    } else {
-      // On WSL, use clip.exe
-      execSync(`echo -n '${text.replace(/'/g, "'\\''")}' | clip.exe`, { timeout: 2000 })
-    }
-  } catch {
-    // Ignore clipboard errors
+  // Spawn the target binary with array args and pipe text via stdin — no
+  // shell, no quote-escaping, no shell-injection surface. Same pattern we
+  // use for pbcopy on macOS.
+  if (isWindows) {
+    // PowerShell's pipeline reads from stdin via $input
+    spawnSync(
+      'powershell',
+      ['-NoProfile', '-WindowStyle', 'Hidden', '-Command', '$input | Set-Clipboard'],
+      { input: text, timeout: 2000, windowsHide: true }
+    )
+  } else {
+    // WSL: clip.exe reads stdin directly, no echo needed
+    spawnSync('clip.exe', [], { input: text, timeout: 2000 })
   }
 }
 
-async function copyToClipboardNative(text: string): Promise<void> {
-  try {
-    // Use xclip to set clipboard text
-    const escaped = text.replace(/'/g, "'\\''")
-    execSync(`echo -n '${escaped}' | xclip -selection clipboard`, { timeout: 2000 })
-  } catch {
-    // Ignore clipboard errors
-  }
+function copyToClipboardNative(text: string): void {
+  // xclip -selection clipboard reads text from stdin when no `-i <file>` is
+  // given. Spawn with array args; no shell, no quote-escaping needed.
+  spawnSync('xclip', ['-selection', 'clipboard'], { input: text, timeout: 2000 })
 }
 
 async function copyToClipboardMac(text: string): Promise<void> {
@@ -399,11 +394,13 @@ async function copyToClipboardMac(text: string): Promise<void> {
 async function copyToClipboard(text: string): Promise<void> {
   if (isWindows || isWSL()) {
     copyToClipboardWindows(text)
-  } else if (isMac) {
-    await copyToClipboardMac(text)
-  } else {
-    await copyToClipboardNative(text)
+    return
   }
+  if (isMac) {
+    await copyToClipboardMac(text)
+    return
+  }
+  copyToClipboardNative(text)
 }
 
 async function processNewImage(
