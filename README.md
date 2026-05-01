@@ -1,6 +1,6 @@
 # sshshot
 
-**Take a screenshot locally → it auto-uploads via SSH → the remote file path lands on your clipboard.** Built for pasting screenshots into Claude Code, OpenAI Codex, or any other AI agent running over SSH on a remote box, where you can't drag-and-drop images. macOS, Linux (X11), Windows, WSL.
+**Take a screenshot locally → it auto-uploads via SSH → the remote file path lands on your clipboard.** Built for pasting screenshots into Claude Code, OpenAI Codex, or any other AI agent running over SSH on a remote box, where you can't drag-and-drop images. macOS, Linux (X11 & Wayland), Windows, WSL.
 
 ```bash
 npm install -g @flamerged/sshshot
@@ -59,15 +59,21 @@ If `pngpaste` isn't installed, the daemon logs a warning and falls back silently
 
 ### Linux
 
-X11 only. Needs `xclip`:
+Both X11 and Wayland are supported. The daemon auto-detects which session you're in (`XDG_SESSION_TYPE` / `WAYLAND_DISPLAY`) and uses the right tool. Install one of:
 
 ```bash
-sudo apt install xclip   # Debian/Ubuntu
-sudo dnf install xclip   # Fedora
-sudo pacman -S xclip     # Arch
+# Wayland (default on modern Ubuntu/Fedora/etc.)
+sudo apt install wl-clipboard   # Debian/Ubuntu
+sudo dnf install wl-clipboard   # Fedora
+sudo pacman -S wl-clipboard     # Arch
+
+# X11 (older sessions, X-only environments)
+sudo apt install xclip          # Debian/Ubuntu
+sudo dnf install xclip          # Fedora
+sudo pacman -S xclip            # Arch
 ```
 
-Wayland support is on the [Roadmap](#roadmap).
+If the wrong tool is installed for your session type, the daemon will print a clear "install X" message at startup and clipboard reads/writes will silently no-op until you fix it.
 
 ### Windows / WSL
 
@@ -147,7 +153,6 @@ You'd still need a server to receive uploads, and AI agents running over SSH don
 
 ## Roadmap
 
-- [ ] Linux Wayland clipboard support (`wl-clipboard`)
 - [ ] Replace 200 ms polling with `fs.watch` / `chokidar` for the macOS screenshot folder
 - [ ] Localized macOS screenshot filename matching (currently English-only `Screenshot*.png`; missing Bildschirmfoto, Capture d'écran, etc.)
 - [ ] Record macOS demo gif (current `demo-windows.gif` is the upstream Windows/PowerShell flow)

@@ -53,6 +53,16 @@ function isWSL(): boolean {
   }
 }
 
+// Detect a Wayland session. The canonical signal is `XDG_SESSION_TYPE` set
+// to 'wayland' by the display manager. As a fallback, `WAYLAND_DISPLAY` is
+// set whenever a Wayland compositor is providing clipboard access.
+function isWaylandSession(): boolean {
+  if (isWindows || isMac) return false
+  if (process.env.XDG_SESSION_TYPE === 'wayland') return true
+  const wd = process.env.WAYLAND_DISPLAY
+  return typeof wd === 'string' && wd.length > 0
+}
+
 function getConfigDir(): string {
   return path.join(os.homedir(), '.config', 'sshshot')
 }
@@ -214,7 +224,7 @@ if ($img -ne $null) {
   }
 }
 
-async function getClipboardImageNative(): Promise<Buffer | null> {
+async function getClipboardImageX11(): Promise<Buffer | null> {
   try {
     // Check if clipboard has image using xclip
     const targets = execSync('xclip -selection clipboard -t TARGETS -o 2>/dev/null', {
@@ -233,6 +243,27 @@ async function getClipboardImageNative(): Promise<Buffer | null> {
       maxBuffer: 50 * 1024 * 1024 // 50MB max
     })
 
+    return imageData.length > 0 ? imageData : null
+  } catch {
+    return null
+  }
+}
+
+async function getClipboardImageWayland(): Promise<Buffer | null> {
+  try {
+    // wl-paste --list-types is fast and tells us if the clipboard holds an
+    // image at all — avoids loading binary data when not needed.
+    const types = execSync('wl-paste --list-types 2>/dev/null', {
+      encoding: 'utf8',
+      timeout: 2000
+    })
+    if (!types.includes('image/png')) return null
+
+    const imageData = execSync('wl-paste --type image/png --no-newline 2>/dev/null', {
+      encoding: 'buffer',
+      timeout: 5000,
+      maxBuffer: 50 * 1024 * 1024 // 50MB max
+    })
     return imageData.length > 0 ? imageData : null
   } catch {
     return null
@@ -341,7 +372,10 @@ async function getClipboardImage(): Promise<Buffer | null> {
   if (isMac) {
     return getClipboardImageMac()
   }
-  return getClipboardImageNative()
+  if (isWaylandSession()) {
+    return getClipboardImageWayland()
+  }
+  return getClipboardImageX11()
 }
 
 export function getImageHash(buffer: Buffer): string {
@@ -463,10 +497,17 @@ function copyToClipboardWindows(text: string): void {
   }
 }
 
-function copyToClipboardNative(text: string): void {
+function copyToClipboardX11(text: string): void {
   // xclip -selection clipboard reads text from stdin when no `-i <file>` is
   // given. Spawn with array args; no shell, no quote-escaping needed.
   spawnSync('xclip', ['-selection', 'clipboard'], { input: text, timeout: 2000 })
+}
+
+function copyToClipboardWayland(text: string): void {
+  // wl-copy reads stdin and copies to the clipboard. Spawn with array args;
+  // no shell, no escaping. --trim-newline strips the trailing newline most
+  // shells would append; we never feed one but it's defensive.
+  spawnSync('wl-copy', ['--trim-newline'], { input: text, timeout: 2000 })
 }
 
 async function copyToClipboardMac(text: string): Promise<void> {
@@ -492,7 +533,11 @@ async function copyToClipboard(text: string): Promise<void> {
     await copyToClipboardMac(text)
     return
   }
-  copyToClipboardNative(text)
+  if (isWaylandSession()) {
+    copyToClipboardWayland(text)
+    return
+  }
+  copyToClipboardX11(text)
 }
 
 async function processNewImage(
@@ -587,7 +632,16 @@ export async function startMonitor(initialRemote: string): Promise<void> {
   logStartTime = Date.now()
 
   const wsl = isWSL()
-  const env = isWindows ? 'Windows' : wsl ? 'WSL' : isMac ? 'macOS' : 'Linux'
+  const wayland = isWaylandSession()
+  const env = isWindows
+    ? 'Windows'
+    : wsl
+      ? 'WSL'
+      : isMac
+        ? 'macOS'
+        : wayland
+          ? 'Linux (Wayland)'
+          : 'Linux (X11)'
   let currentRemote = resolveActiveTarget(initialRemote)
   log(`Starting monitor for: ${currentRemote}`)
   log(`Environment: ${env}`)
@@ -623,16 +677,26 @@ export async function startMonitor(initialRemote: string): Promise<void> {
     log(`Watching screenshot dir: ${screenshotDir}`)
   }
 
-  // Linux X11 prerequisites — mirror the macOS pngpaste warning so users
-  // get a visible signal when clipboard reads silently fail.
+  // Linux clipboard prerequisites — warn loudly if the right tool is missing.
   if (!isWindows && !wsl && !isMac) {
-    const xclipCheck = spawnSync('which', ['xclip'], { encoding: 'utf8', timeout: 2000 })
-    if (xclipCheck.status !== 0) {
-      log('Warning: xclip not found. Install with one of:')
-      log('  Debian/Ubuntu:  sudo apt install xclip')
-      log('  Fedora:         sudo dnf install xclip')
-      log('  Arch:           sudo pacman -S xclip')
-      log('  Clipboard detection will silently fail until xclip is installed.')
+    if (wayland) {
+      const check = spawnSync('which', ['wl-paste'], { encoding: 'utf8', timeout: 2000 })
+      if (check.status !== 0) {
+        log('Warning: wl-clipboard not found (Wayland session detected). Install with:')
+        log('  Debian/Ubuntu:  sudo apt install wl-clipboard')
+        log('  Fedora:         sudo dnf install wl-clipboard')
+        log('  Arch:           sudo pacman -S wl-clipboard')
+        log('  Clipboard detection will silently fail until wl-clipboard is installed.')
+      }
+    } else {
+      const check = spawnSync('which', ['xclip'], { encoding: 'utf8', timeout: 2000 })
+      if (check.status !== 0) {
+        log('Warning: xclip not found (X11 session). Install with:')
+        log('  Debian/Ubuntu:  sudo apt install xclip')
+        log('  Fedora:         sudo dnf install xclip')
+        log('  Arch:           sudo pacman -S xclip')
+        log('  Clipboard detection will silently fail until xclip is installed.')
+      }
     }
   }
 
