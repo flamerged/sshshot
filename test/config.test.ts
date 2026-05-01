@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseSSHConfig } from '../src/config'
+import { isValidRemoteName, parseSSHConfig } from '../src/config'
 
 describe('parseSSHConfig', () => {
   it('returns empty array for empty input', () => {
@@ -114,5 +114,92 @@ Host hetzner-2
       { name: 'hetzner-1', hostname: '5.6.7.8', user: 'deploy' },
       { name: 'hetzner-2', hostname: '9.10.11.12' }
     ])
+  })
+
+  it('expands Include directives via the loader', () => {
+    const root = `Host primary
+  HostName 1.2.3.4
+
+Include corp_config
+`
+    const corp = `Host corp-bastion
+  HostName bastion.corp
+  User ops
+`
+    const loader = (spec: string): string[] => (spec === 'corp_config' ? [corp] : [])
+    expect(parseSSHConfig(root, loader)).toEqual([
+      { name: 'primary', hostname: '1.2.3.4' },
+      { name: 'corp-bastion', hostname: 'bastion.corp', user: 'ops' }
+    ])
+  })
+
+  it('handles multiple path specs on one Include line', () => {
+    const root = `Include first second
+`
+    const first = `Host a
+  HostName a.example.com
+`
+    const second = `Host b
+  HostName b.example.com
+`
+    const loader = (spec: string): string[] => {
+      if (spec === 'first') return [first]
+      if (spec === 'second') return [second]
+      return []
+    }
+    expect(parseSSHConfig(root, loader)).toEqual([
+      { name: 'a', hostname: 'a.example.com' },
+      { name: 'b', hostname: 'b.example.com' }
+    ])
+  })
+
+  it('caps Include recursion depth instead of stack-overflowing on cycles', () => {
+    // Self-referential include: file A includes itself. Without the depth
+    // cap this would recurse indefinitely.
+    const fileA = `Host a
+  HostName a.example.com
+
+Include selfref
+`
+    const loader = (spec: string): string[] => (spec === 'selfref' ? [fileA] : [])
+    const result = parseSSHConfig(fileA, loader)
+    // Each recursion level emits the `a` host once; depth cap stops the loop.
+    // We don't assert exact count — just that it terminated and only emitted
+    // the one expected host name.
+    expect(result.length).toBeGreaterThan(0)
+    expect(result.every((h) => h.name === 'a')).toBe(true)
+  })
+
+  it('skips Match blocks (no Host names emitted from them)', () => {
+    const input = `Host plain
+  HostName plain.example.com
+
+Match host *.dev
+  ForwardAgent yes
+  HostName dev.example.com
+`
+    expect(parseSSHConfig(input)).toEqual([{ name: 'plain', hostname: 'plain.example.com' }])
+  })
+})
+
+describe('isValidRemoteName', () => {
+  it('accepts ordinary hostnames', () => {
+    expect(isValidRemoteName('myhost')).toBe(true)
+    expect(isValidRemoteName('prod-1')).toBe(true)
+    expect(isValidRemoteName('user@host.example.com')).toBe(true)
+    expect(isValidRemoteName('192.168.1.1')).toBe(true)
+  })
+
+  it('rejects names that ssh would parse as flags', () => {
+    expect(isValidRemoteName('-oProxyCommand=evil.sh')).toBe(false)
+    expect(isValidRemoteName('-l')).toBe(false)
+    expect(isValidRemoteName('-')).toBe(false)
+  })
+
+  it('rejects empty / whitespace / control characters', () => {
+    expect(isValidRemoteName('')).toBe(false)
+    expect(isValidRemoteName('host with space')).toBe(false)
+    expect(isValidRemoteName('host\twith\ttab')).toBe(false)
+    expect(isValidRemoteName('host\nwith\nnewline')).toBe(false)
   })
 })

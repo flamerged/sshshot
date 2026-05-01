@@ -299,8 +299,45 @@ async function getClipboardImageMac(): Promise<Buffer | null> {
 export const MAC_SCREENSHOT_FILENAME_RE =
   /^(Screenshot|Bildschirm(foto|aufnahme)|Capture (d'écran|d'ecran)|Captura (de pantalla|de tela)|Schermata|Schermafbeelding|Skärmavbild|Skjermbilde|Skærmbillede|スクリーンショット|スクリーンキャプチャ|화면 캡처|Снимок экрана|Capture)(?=\s|\.|$).*\.png$/i
 
+// Optional second matcher built at startup from
+// `defaults read com.apple.screencapture name` so users who customized
+// their screenshot prefix (e.g. `defaults write com.apple.screencapture
+// name "MyShot"`) are still detected. Stays null when the user hasn't
+// overridden the default.
+let customMacScreenshotRe: RegExp | null = null
+
+// Build a filename regex from a user-provided prefix, escaping regex
+// metacharacters. Exported for tests.
+export function buildCustomScreenshotRegex(prefix: string): RegExp {
+  const trimmed = prefix.trim()
+  if (trimmed.length === 0) {
+    throw new Error('Empty prefix')
+  }
+  const escaped = trimmed.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return new RegExp(`^${escaped}(?=\\s|\\.|$).*\\.png$`, 'i')
+}
+
+// Read the user's custom screenshot name override at daemon startup.
+// macOS-only — the keys don't exist on other platforms. Logs nothing on the
+// no-override path; logs a one-line confirmation when an override is found.
+export function detectCustomMacScreenshotPrefix(): string | null {
+  if (!isMac) return null
+  const result = spawnSync('defaults', ['read', 'com.apple.screencapture', 'name'], {
+    encoding: 'utf8',
+    timeout: 2000
+  })
+  if (result.status !== 0 || !result.stdout) return null
+  const name = result.stdout.trim()
+  // `defaults read` returns the literal value with surrounding double quotes
+  // for strings containing spaces. Strip them.
+  const unquoted = name.replace(/^"(.*)"$/, '$1')
+  return unquoted.length > 0 ? unquoted : null
+}
+
 export function isMacScreenshotFilename(filename: string): boolean {
-  return MAC_SCREENSHOT_FILENAME_RE.test(filename)
+  if (MAC_SCREENSHOT_FILENAME_RE.test(filename)) return true
+  if (customMacScreenshotRe && customMacScreenshotRe.test(filename)) return true
+  return false
 }
 
 // mtime of the candidate file we observed on the previous poll. Used to
@@ -422,9 +459,13 @@ function getRemoteHomePath(remote: string): string {
   // Primary: ask the remote directly. Handles non-standard home dirs
   // (/Users/<user> on macOS, /data/<user> on some configs, custom HOME
   // overrides in /etc/passwd). Spawn with array args — no shell.
+  // The `--` after the options terminates ssh's option parsing so a remote
+  // name starting with `-` (e.g. a typo or a malicious `-oProxyCommand=…`)
+  // can't be mistaken for a flag. The CLI input layer already rejects such
+  // names via isValidRemoteName, but defense in depth is cheap.
   const echoResult = spawnSync(
     'ssh',
-    ['-o', 'ConnectTimeout=5', '-o', 'BatchMode=yes', remote, 'echo $HOME'],
+    ['-o', 'ConnectTimeout=5', '-o', 'BatchMode=yes', '--', remote, 'echo $HOME'],
     { encoding: 'utf8', timeout: 7000 }
   )
   if (echoResult.status === 0 && echoResult.stdout) {
@@ -447,7 +488,10 @@ function getRemoteHomePath(remote: string): string {
   // Fallback 2: named host without user — resolve via `ssh -G` and guess.
   // Use spawnSync with array args so a maliciously-crafted `remote`
   // containing shell metacharacters cannot inject.
-  const sshGResult = spawnSync('ssh', ['-G', remote], { encoding: 'utf8', timeout: 3000 })
+  const sshGResult = spawnSync('ssh', ['-G', '--', remote], {
+    encoding: 'utf8',
+    timeout: 3000
+  })
   if (sshGResult.status === 0 && sshGResult.stdout) {
     const userMatch = sshGResult.stdout.match(/^user\s+(.+)$/m)
     if (userMatch) {
@@ -464,6 +508,35 @@ function getRemoteHomePath(remote: string): string {
   return '~'
 }
 
+// Cap concurrent ssh uploads. Without this, a burst of screenshots (e.g.
+// Cmd+Shift+3 spam, or a slow remote causing pile-up) would spawn one ssh
+// process per screenshot — five rapid screenshots = five simultaneous ssh
+// sessions opening connections to the same host. Two-at-a-time gives some
+// pipelining benefit without thrashing the user's connection budget or
+// triggering MaxSessions limits on the remote sshd.
+const MAX_CONCURRENT_UPLOADS = 2
+let activeUploadCount = 0
+const uploadWaitQueue: Array<() => void> = []
+
+function acquireUploadSlot(): Promise<void> {
+  if (activeUploadCount < MAX_CONCURRENT_UPLOADS) {
+    activeUploadCount++
+    return Promise.resolve()
+  }
+  return new Promise<void>((resolve) => {
+    uploadWaitQueue.push(() => {
+      activeUploadCount++
+      resolve()
+    })
+  })
+}
+
+function releaseUploadSlot(): void {
+  activeUploadCount--
+  const next = uploadWaitQueue.shift()
+  if (next) next()
+}
+
 async function pipeToRemote(
   imageBuffer: Buffer,
   remote: string,
@@ -477,6 +550,7 @@ async function pipeToRemote(
     })
   }
 
+  await acquireUploadSlot()
   const homeDir = getRemoteHomePath(remote)
   const remotePath = `${homeDir}/sshshot-screenshots/${filename}`
 
@@ -489,6 +563,10 @@ async function pipeToRemote(
       [
         '-o',
         'ConnectTimeout=5',
+        // `--` terminates ssh's option parsing — see getRemoteHomePath for
+        // the rationale. The validator at config-input time should already
+        // have rejected `-`-prefixed remotes; this is the defense-in-depth.
+        '--',
         remote,
         `mkdir -p ~/sshshot-screenshots && cat > ~/sshshot-screenshots/${filename}`
       ],
@@ -507,10 +585,12 @@ async function pipeToRemote(
 
     proc.on('close', (code) => {
       // Return the explicit path for clipboard, but command used ~ for reliability
+      releaseUploadSlot()
       resolve({ success: code === 0, path: remotePath, error: stderr.trim() || undefined })
     })
 
     proc.on('error', (err) => {
+      releaseUploadSlot()
       resolve({ success: false, path: remotePath, error: err.message })
     })
   })
@@ -749,6 +829,21 @@ export async function startMonitor(initialRemote: string): Promise<void> {
     } catch {
       log('Warning: pngpaste not found. Install with: brew install pngpaste')
       log('  Clipboard detection disabled — file watcher still active.')
+    }
+
+    // Pick up a user-customized screenshot name prefix (set via
+    // `defaults write com.apple.screencapture name <Custom>`). Stays unset
+    // on stock systems so the locale matcher above is the sole filter.
+    const customPrefix = detectCustomMacScreenshotPrefix()
+    if (customPrefix) {
+      try {
+        customMacScreenshotRe = buildCustomScreenshotRegex(customPrefix)
+        log(`Custom screenshot prefix detected: '${customPrefix}'`)
+      } catch (err) {
+        log(
+          `Could not compile custom screenshot prefix '${customPrefix}': ${(err as Error).message}`
+        )
+      }
     }
 
     // Initialize lastSeenScreenshotMtime to newest existing screenshot file

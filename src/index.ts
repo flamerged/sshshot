@@ -4,7 +4,14 @@ import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
 import { spawn, spawnSync, execSync } from 'child_process'
-import { Config, getPidFile, loadConfig, saveConfig, detectSSHRemotes } from './config'
+import {
+  Config,
+  detectSSHRemotes,
+  getPidFile,
+  isValidRemoteName,
+  loadConfig,
+  saveConfig
+} from './config'
 import { promptConfirm, promptSelect, promptInput, promptMultiSelect } from './prompts'
 import { startMonitor } from './monitor'
 
@@ -191,9 +198,18 @@ async function addRemotes(existing: string[]): Promise<string[]> {
   let addMore = await promptConfirm('Add a custom SSH remote?')
   while (addMore) {
     const remoteName = await promptInput('Enter SSH remote (e.g., user@host)')
-    if (remoteName && !remotes.includes(remoteName)) {
-      remotes.push(remoteName)
-      console.log(`Added: ${remoteName}`)
+    if (remoteName) {
+      if (!isValidRemoteName(remoteName)) {
+        // Block names that ssh would parse as flags (`-oProxyCommand=…`),
+        // names with whitespace, and control chars. Empty input is also
+        // covered by isValidRemoteName.
+        console.log(
+          `Rejected: ${JSON.stringify(remoteName)} (must not start with '-' or contain whitespace)`
+        )
+      } else if (!remotes.includes(remoteName)) {
+        remotes.push(remoteName)
+        console.log(`Added: ${remoteName}`)
+      }
     }
     addMore = await promptConfirm('Add another?')
   }
