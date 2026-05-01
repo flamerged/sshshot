@@ -259,6 +259,14 @@ function isMacScreenshotFilename(filename: string): boolean {
   return MAC_SCREENSHOT_FILENAME_RE.test(filename)
 }
 
+// mtime of the candidate file we observed on the previous poll. Used to
+// gate the readFileSync until the file has stayed at the same mtime for
+// at least one full poll cycle — proof that the OS isn't still flushing
+// writes. macOS Cmd+Shift+3 on a large display can take >300ms to fully
+// write; the previous heuristic ('skip if mtime is younger than 300ms')
+// would let through a partially-written file in that window.
+let lastObservedScreenshotMtime = 0
+
 function getLatestMacScreenshot(): Buffer | null {
   const dir = getMacScreenshotDir()
   try {
@@ -277,13 +285,25 @@ function getLatestMacScreenshot(): Buffer | null {
     const newest = files[0]
     if (newest.mtime <= lastSeenScreenshotMtime) return null
 
-    // Wait briefly to ensure file is fully written
+    // Stability check: only read if the mtime has been the same as it was
+    // on the previous poll. If it changed, the OS is still flushing writes;
+    // wait another poll. This handles slow filesystems and large screenshots
+    // where the write spans multiple poll cycles.
+    if (newest.mtime !== lastObservedScreenshotMtime) {
+      lastObservedScreenshotMtime = newest.mtime
+      return null
+    }
+
+    // Belt-and-suspenders: even after stability, require ≥300ms since the
+    // last write. Catches edge cases where the write completes between
+    // polls and stability is only one poll old.
     const now = Date.now()
     if (now - newest.mtime < 300) {
-      return null // Too fresh — check again next poll
+      return null
     }
 
     lastSeenScreenshotMtime = newest.mtime
+    lastObservedScreenshotMtime = 0 // reset for the next file
     return fs.readFileSync(newest.path)
   } catch {
     return null
