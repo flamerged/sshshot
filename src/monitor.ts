@@ -329,12 +329,17 @@ async function copyToClipboardNative(text: string): Promise<void> {
 }
 
 async function copyToClipboardMac(text: string): Promise<void> {
-  try {
-    const escaped = text.replace(/'/g, "'\\''");
-    execSync(`echo -n '${escaped}' | pbcopy`, { timeout: 2000 });
-  } catch {
-    // Ignore clipboard errors
-  }
+  // Spawn pbcopy and pipe text via stdin — avoids the macOS /bin/echo `-n` bug
+  // (the shell builtin honors -n but the binary doesn't, so `echo -n` would
+  // copy `-n FILE_PATH` into the clipboard) and skips shell-escaping entirely.
+  return new Promise((resolve) => {
+    const proc = spawn("pbcopy");
+    const finish = () => resolve();
+    proc.on("error", finish);
+    proc.on("close", finish);
+    proc.stdin.write(text);
+    proc.stdin.end();
+  });
 }
 
 async function copyToClipboard(text: string): Promise<void> {
