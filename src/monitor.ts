@@ -194,14 +194,22 @@ if ($img -ne $null) {
       return null
     }
 
-    // Convert path for WSL if needed
+    // Convert path for WSL if needed. Use spawnSync with array args (NOT
+    // execSync with a template string) so a path containing single quotes,
+    // backticks, or `$(…)` can't break the command. The path comes from
+    // PowerShell output and is normally safe, but defense in depth is free
+    // and consistent with the rest of the spawnSync migration.
     if (isWindows) {
       tempFilePath = windowsPath
     } else {
-      tempFilePath = execSync(`wslpath '${windowsPath}'`, {
+      const wslpathResult = spawnSync('wslpath', [windowsPath], {
         encoding: 'utf8',
         timeout: 2000
-      }).trim()
+      })
+      if (wslpathResult.status !== 0 || !wslpathResult.stdout) {
+        return null
+      }
+      tempFilePath = wslpathResult.stdout.trim()
     }
 
     if (fs.existsSync(tempFilePath)) {
@@ -739,8 +747,8 @@ export async function startMonitor(initialRemote: string): Promise<void> {
   let watcher: fs.FSWatcher | null = null
   let watchDebounce: NodeJS.Timeout | null = null
   if (isMac) {
+    const screenshotDir = getMacScreenshotDir()
     try {
-      const screenshotDir = getMacScreenshotDir()
       watcher = fs.watch(screenshotDir, (_event, filename) => {
         if (!filename || !isMacScreenshotFilename(filename)) return
         if (watchDebounce) clearTimeout(watchDebounce)
@@ -749,9 +757,25 @@ export async function startMonitor(initialRemote: string): Promise<void> {
           void checkFileScreenshot()
         }, 300)
       })
+      // The watcher can die mid-lifetime — common cause is the directory
+      // being recreated by a sync tool (iCloud Drive, Dropbox), or the
+      // user changing the screenshot location. Without an error handler,
+      // failure was silent and the only signal was 'screenshots stopped
+      // working'. Now we log + null out the watcher so the polling
+      // fallback keeps catching new screenshots.
+      watcher.on('error', (err: Error) => {
+        log(`fs.watch error on ${screenshotDir}: ${err.message}`)
+        log('  Continuing on polling fallback. Restart the daemon to retry fs.watch.')
+        try {
+          watcher?.close()
+        } catch {
+          /* already closed */
+        }
+        watcher = null
+      })
       log(`fs.watch active on ${screenshotDir}`)
     } catch (err) {
-      log(`fs.watch setup failed; using polling fallback: ${err as Error}`)
+      log(`fs.watch setup failed; using polling fallback: ${(err as Error).message}`)
     }
 
     // Cleanup the watcher on the same exit signals as the PID file.
