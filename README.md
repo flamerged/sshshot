@@ -176,6 +176,25 @@ You'd still need a server to receive uploads, and AI agents running over SSH don
 
 ## Roadmap
 
+### Reliability fixes
+
+These are user-visible bugs surfaced by audit reviews — none silent, all observable in real workflows.
+
+- [ ] SSH upload uses `BatchMode=yes` + an absolute upload timeout (via AbortController/kill) + a stdin EPIPE handler, so a hung remote doesn't permanently occupy an upload slot
+- [ ] `sshshot stop` honors the daemon's 5 s in-flight-upload grace before SIGKILL — currently SIGTERM is sent and the process is killed before the daemon can finish a mid-flight upload
+- [ ] Decouple the poll loop from upload completion so a slow SSH upload can't cause the daemon to miss the next clipboard / file screenshot
+- [ ] Process all stable macOS screenshots newer than `lastSeenScreenshotMtime` in mtime order — currently a burst of multiple rapid screenshots only uploads the most recent one
+- [ ] Editing remotes via `sshshot config` preserves `activeTarget` and `paused` (currently both are silently dropped)
+- [ ] Typo'd CLI commands like `sshshot stat` print a clear error and exit 1 — currently they fall through every known-command branch and run first-run setup, which is confusing
+- [ ] Fatal CLI errors set a non-zero exit code so scripts and CI detect failures (currently `main().catch(console.error)` exits 0)
+- [ ] `loadConfig` runtime-validates the parsed JSON shape (so a hand-edited `{ "remotes": "host" }` doesn't break the daemon); `saveConfig` writes via temp-file + atomic rename so a crash mid-write can't truncate the file
+- [ ] Cache clipboard-tool availability at startup — currently a missing `pngpaste`/`xclip`/`wl-paste` is re-spawned every 200 ms poll
+- [ ] `~/.ssh/config` parsing handles unreadable files (try/catch on read), dedupes auto-detected aliases, and filters `?` wildcards in addition to `*`
+- [ ] `removePidFile` only unlinks when the file's contents still match `process.pid`, so a stop-and-restart race can't delete the new daemon's pid file
+- [ ] mtime-vs-daemon-start gate so a Screenshot-named file copied into the watch dir (restored from backup, `cp`'d in, etc.) isn't mistakenly uploaded as a fresh screenshot
+
+### Features and ergonomics
+
 - [ ] **Context-aware clipboard routing** (macOS first) — replace clipboard with the remote path only when the foreground app is a terminal-ish thing (Terminal/iTerm2/Warp/Ghostty/Zed/VS Code/etc.). For Slack/GitHub/iMessage screenshots the image bytes stay on the clipboard. `pause`/`resume` is the short-term workaround.
 - [ ] Retry on SSH failure with exponential backoff — currently a failed upload silently drops the screenshot
 - [ ] System notification on upload success / failure (`osascript -e 'display notification'` on macOS, `notify-send` on Linux) so the daemon's status is visible without tailing logs
@@ -186,7 +205,6 @@ You'd still need a server to receive uploads, and AI agents running over SSH don
 - [ ] `sshshot open` — open the most recent screenshot in the system image viewer
 - [ ] Optional `pngquant` / `optipng` compression passthrough before upload — 80–90 % size reduction for similar visual quality, big win on slow links
 - [ ] Configurable remote upload directory (currently hardcoded to `~/sshshot-screenshots/`); same for the `local` mode directory
-- [ ] mtime-vs-daemon-start gate so a Screenshot-named file copied into the watch dir (restored from backup, `cp`'d in, etc.) isn't mistakenly uploaded as a fresh screenshot
 - [ ] Record macOS demo gif (current `demo-windows.gif` is the upstream Windows/PowerShell flow)
 - [ ] Record Linux X11 / Wayland demo gif
 - [ ] Optional inline image paste (instead of path) for tools that accept multipart pastes — future ergonomic win
