@@ -16,3 +16,4 @@ dist/
 # Claude Code (local-only, not committed)
 CLAUDE.md
 .claude/
+research_tmp
