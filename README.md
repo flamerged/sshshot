@@ -179,6 +179,9 @@ You'd still need a server to receive uploads, and AI agents running over SSH don
 - [ ] **Context-aware clipboard routing** (macOS first) — replace clipboard with the remote path only when the foreground app is a terminal-ish thing (Terminal/iTerm2/Warp/Ghostty/Zed/VS Code/etc.). For Slack/GitHub/iMessage screenshots the image bytes stay on the clipboard. `pause`/`resume` is the short-term workaround.
 - [ ] Retry on SSH failure with exponential backoff — currently a failed upload silently drops the screenshot
 - [ ] System notification on upload success / failure (`osascript -e 'display notification'` on macOS, `notify-send` on Linux) so the daemon's status is visible without tailing logs
+- [ ] `sshshot doctor` — single command that reports Node version, platform/session detection, OS tool availability (`pngpaste`/`xclip`/`wl-clipboard`/`pbcopy`/PowerShell), config shape, daemon PID sanity, target reachability, SSH auth, and remote directory writability. Goes from "is it broken?" to "exactly this is missing"
+- [ ] Non-interactive CLI surface: `sshshot start <target>` shorthand, `sshshot start --local`, `sshshot status --json`, `sshshot config add/remove/list`, `sshshot uninstall --yes`, `--foreground` flag for debugging without detaching. Makes scripts, dotfiles, and launch agents painless
+- [ ] Start in `local` mode without any SSH remotes configured — first-run UX should offer "local only" as a valid path; currently `sshshot start` exits when `remotes.length === 0` even though `local` is always a valid target
 - [ ] `sshshot last` / `sshshot history` — show the most recent N uploads with timestamps + remote paths
 - [ ] `sshshot open` — open the most recent screenshot in the system image viewer
 - [ ] Optional `pngquant` / `optipng` compression passthrough before upload — 80–90 % size reduction for similar visual quality, big win on slow links
