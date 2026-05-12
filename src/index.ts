@@ -14,6 +14,7 @@ import {
 } from './config'
 import { promptConfirm, promptSelect, promptInput, promptMultiSelect } from './prompts'
 import { startMonitor } from './monitor'
+import { runMenubarCommand } from './menubar'
 
 const isWindows = process.platform === 'win32'
 
@@ -296,12 +297,13 @@ function showHelp(): void {
 Commands:
   start             Start monitoring in background
   stop              Stop background process
-  status            Show if running
+  status [--json]   Show if running (JSON variant for scripts and the menubar)
   target [<name>]   Show or change the active target without restarting the daemon
   pause             Daemon stays alive but stops touching the clipboard
   resume            Resume processing screenshots
   toggle            Flip between pause/resume
   config            Modify configuration
+  menubar           Manage the macOS menu-bar plugin (install/uninstall/status)
   uninstall         Remove config and stop process
   version           Print version and exit
   help              Show this help
@@ -397,8 +399,35 @@ function stopBackground(): void {
   }
 }
 
-function showStatus(): void {
+function showStatus(asJson = false): void {
   const processes = findSshshotProcesses()
+  const config = loadConfig()
+  const paused = Boolean(config?.paused)
+  const activeTarget = config?.activeTarget ?? null
+
+  if (asJson) {
+    // Machine-readable shape consumed by the menu-bar plugin and any other
+    // scripts. Keep the schema stable: changes here ripple into anything
+    // parsing this output, so add fields rather than rename.
+    // Always include pid/target keys (null when stopped) so external
+    // consumers don't have to branch on key presence. `target` is parsed
+    // from the daemon's --daemon arg via process listing — distinct from
+    // the persisted activeTarget (which the user may have just changed via
+    // `sshshot target`). Both surfaced so callers can detect drift.
+    const payload =
+      processes.length === 0
+        ? { running: false, paused, activeTarget, pid: null, target: null }
+        : {
+            running: true,
+            paused,
+            activeTarget,
+            pid: processes[0].pid,
+            target: processes[0].target
+          }
+    // Emit JSON on the first line, no banner — easier for parsers.
+    process.stdout.write(JSON.stringify(payload) + '\n')
+    return
+  }
 
   if (processes.length === 0) {
     console.log('Not running')
@@ -408,7 +437,7 @@ function showStatus(): void {
   // Surface the paused state on the same line — otherwise users wonder
   // why screenshots aren't being processed even though `status` says
   // "Running".
-  const pauseLabel = loadConfig()?.paused ? ' [paused]' : ''
+  const pauseLabel = paused ? ' [paused]' : ''
 
   for (const proc of processes) {
     if (proc.target) {
@@ -456,7 +485,7 @@ async function runConfig(): Promise<Config> {
   return config
 }
 
-async function startCommand(): Promise<void> {
+async function startCommand(targetArg?: string): Promise<void> {
   const config = loadConfig()
 
   if (!config || config.remotes.length === 0) {
@@ -468,7 +497,16 @@ async function startCommand(): Promise<void> {
   const options = ['local', ...config.remotes]
 
   let selected: string
-  if (options.length === 1) {
+  if (targetArg) {
+    // Non-interactive path: `sshshot start <target>` — required by the
+    // menu-bar plugin since SwiftBar can't answer interactive prompts.
+    if (!options.includes(targetArg)) {
+      console.log(`Unknown target: ${targetArg}`)
+      console.log(`Available:     ${options.join(', ')}`)
+      process.exit(1)
+    }
+    selected = targetArg
+  } else if (options.length === 1) {
     selected = options[0]
   } else {
     selected = await promptSelect('Select target', options)
@@ -508,6 +546,13 @@ async function main(): Promise<void> {
     return
   }
 
+  // `status --json` is for machine consumption (menu-bar plugin, scripts).
+  // Bypass the human-facing banner so the entire stdout is parseable JSON.
+  if (command === 'status' && args.includes('--json')) {
+    showStatus(true)
+    return
+  }
+
   console.log(`sshshot v${getVersion()}\n`)
 
   // Handle commands
@@ -522,12 +567,14 @@ async function main(): Promise<void> {
   }
 
   if (command === 'status') {
-    showStatus()
+    // The --json variant is handled above the banner; this branch is the
+    // human-readable form only.
+    showStatus(false)
     return
   }
 
   if (command === 'start') {
-    await startCommand()
+    await startCommand(args[1])
     return
   }
 
@@ -553,6 +600,11 @@ async function main(): Promise<void> {
 
   if (command === 'config') {
     await runConfig()
+    return
+  }
+
+  if (command === 'menubar') {
+    runMenubarCommand(args[1])
     return
   }
 

@@ -114,6 +114,9 @@ sshshot pause            keep daemon alive but stop touching the clipboard
 sshshot resume           resume processing screenshots
 sshshot toggle           flip pause/resume in one command
 sshshot config           add/remove SSH remotes
+sshshot menubar install  install the macOS menu-bar plugin (SwiftBar)
+sshshot menubar status   show whether the plugin is installed
+sshshot menubar uninstall remove the menu-bar plugin
 sshshot uninstall        stop daemon + remove ~/.config/sshshot
 ```
 
@@ -130,6 +133,32 @@ sshshot toggle    # flips between the two
 ```
 
 `sshshot status` shows `[paused]` next to the running PID so you know which mode you're in. This is intentionally lighter than `stop`/`start` — no process restart, no re-prompting for which remote, instant flip.
+
+### Switching targets from the menu bar (macOS only)
+
+If you bounce between many remotes (or just want a visible indicator that the daemon is running and which target is active), install the SwiftBar menu-bar plugin:
+
+```bash
+brew install --cask swiftbar    # if you don't already have it
+brew install jq                 # required — used to parse status + config
+sshshot menubar install         # drops the plugin at ~/SwiftBarPlugins/sshshot.5s.sh
+```
+
+Run `sshshot menubar status` to see whether SwiftBar and jq are present and the plugin file is installed. With SwiftBar running, a 📸 icon appears in your menu bar showing the current active target:
+
+- `📸 citadel` — daemon running, target set
+- `📸⏸ citadel` — daemon running but paused (orange)
+- `📸 idle` — daemon not running (gray)
+
+Clicking the icon opens a submenu with:
+
+- Pause / resume / restart / stop daemon (whichever applies)
+- A list of all your configured remotes — click one to switch active target
+- Open config / open latest log
+
+The plugin re-reads `sshshot status --json` every 5 seconds, so the indicator updates as state changes from any source (CLI, daemon, another machine pushing config changes). Click-actions invoke the same `sshshot` commands you'd run by hand — no daemon restart, no separate process.
+
+Linux/Windows menu-bar support isn't on the roadmap yet; the equivalent for those platforms is the CLI commands below.
 
 ### Switching targets at runtime
 
@@ -195,7 +224,7 @@ These are user-visible bugs surfaced by audit reviews — none silent, all obser
 
 ### Features and ergonomics
 
-- [ ] **Context-aware clipboard routing** (macOS first) — replace clipboard with the remote path only when the foreground app is a terminal-ish thing (Terminal/iTerm2/Warp/Ghostty/Zed/VS Code/etc.). For Slack/GitHub/iMessage screenshots the image bytes stay on the clipboard. `pause`/`resume` is the short-term workaround.
+- [ ] **Context-aware clipboard routing** (macOS first) — replace clipboard with the remote path only when the foreground app is a terminal-ish thing (Terminal/iTerm2/Warp/Ghostty/Zed/VS Code/etc.). For Slack/GitHub/iMessage screenshots the image bytes stay on the clipboard. `pause`/`resume` is the short-term workaround. Will surface as a `clipboardMode: "auto" | "manual" | "always"` setting with `auto` as the default, plus a clipboard-mode entry in the menu-bar plugin's submenu.
 - [ ] Retry on SSH failure with exponential backoff — currently a failed upload silently drops the screenshot
 - [ ] System notification on upload success / failure (`osascript -e 'display notification'` on macOS, `notify-send` on Linux) so the daemon's status is visible without tailing logs
 - [ ] `sshshot doctor` — single command that reports Node version, platform/session detection, OS tool availability (`pngpaste`/`xclip`/`wl-clipboard`/`pbcopy`/PowerShell), config shape, daemon PID sanity, target reachability, SSH auth, and remote directory writability. Goes from "is it broken?" to "exactly this is missing"
